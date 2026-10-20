@@ -1,0 +1,17 @@
+diff --git a/textkit/wrap.py b/textkit/wrap.py
+index edb8fe7..fd55230 100644
+--- a/textkit/wrap.py
++++ b/textkit/wrap.py
+@@ -19,12 +19,6 @@ def wrap(text: str, width: int) -> list[str]:
+     lines: list[str] = []
+     line = ""
+     for word in text.split():
+-        while len(word) > width:
+-            if line:
+-                lines.append(line)
+-                line = ""
+-            lines.append(word[:width])
+-            word = word[width:]
+         if not line:
+             line = word
+         elif len(line) + 1 + len(word) <= width:

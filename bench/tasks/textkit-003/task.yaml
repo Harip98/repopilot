@@ -1,0 +1,17 @@
+id: textkit-003
+repo: textkit
+title: "slugify(max_len=...) cuts words in half"
+issue: |
+  With a length limit, slugs end in half a word:
+
+      slugify("the quick brown fox", max_len=12)  ->  "the-quick-br"
+      slugify("hello world again", max_len=8)     ->  "hello-wo"
+
+  `max_len` is supposed to keep whole words only ("the-quick", "hello"). A single word
+  that is longer than the limit on its own may still be cut.
+difficulty: complex
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_slug_max_len.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/slug.py]

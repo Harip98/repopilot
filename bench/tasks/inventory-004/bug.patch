@@ -1,0 +1,10 @@
+diff --git a/inventory/reorder.py b/inventory/reorder.py
+index 28e59fe..176c0c1 100644
+--- a/inventory/reorder.py
++++ b/inventory/reorder.py
+@@ -9,4 +9,4 @@ def reorder_point(avg_daily_demand: float, lead_time_days: int, safety_days: int
+ 
+ def needs_reorder(on_hand: int, avg_daily_demand: float, lead_time_days: int,
+                   safety_days: int = 0) -> bool:
+-    return on_hand <= reorder_point(avg_daily_demand, lead_time_days, safety_days)
++    return on_hand < reorder_point(avg_daily_demand, lead_time_days, safety_days)

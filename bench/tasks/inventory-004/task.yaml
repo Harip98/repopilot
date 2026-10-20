@@ -1,0 +1,13 @@
+id: inventory-004
+repo: inventory
+title: "No reorder suggested exactly at the reorder point"
+issue: |
+  With 6 units on hand, demand of 2 a day and a 3-day lead time, the reorder point is 6,
+  yet `needs_reorder(6, 2, 3)` is False. The README says to reorder when stock is *at or
+  below* the reorder point.
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_reorder_boundary.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [inventory/reorder.py]

@@ -1,0 +1,17 @@
+diff --git b/textkit/csvline.py a/textkit/csvline.py
+index dc36622..1ac6cd2 100644
+--- b/textkit/csvline.py
++++ a/textkit/csvline.py
+@@ -9,7 +9,11 @@ def parse_csv_line(line: str, delim: str = ",") -> list[str]:
+         ch = line[i]
+         if quoted:
+             if ch == '"':
+-                quoted = False
++                if i + 1 < len(line) and line[i + 1] == '"':
++                    buf.append('"')
++                    i += 1
++                else:
++                    quoted = False
+             else:
+                 buf.append(ch)
+         elif ch == '"':

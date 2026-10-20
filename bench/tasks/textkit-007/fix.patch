@@ -1,0 +1,12 @@
+diff --git b/textkit/csvline.py a/textkit/csvline.py
+index 595087d..1ac6cd2 100644
+--- b/textkit/csvline.py
++++ a/textkit/csvline.py
+@@ -26,6 +26,5 @@ def parse_csv_line(line: str, delim: str = ",") -> list[str]:
+         i += 1
+     if quoted:
+         raise ValueError("unterminated quoted field")
+-    if buf:
+-        fields.append("".join(buf))
++    fields.append("".join(buf))
+     return fields

@@ -1,0 +1,19 @@
+id: inventory-005
+repo: inventory
+title: "Importing an export grouped by SKU fails"
+issue: |
+  The nightly import from the warehouse system fails with `InsufficientStock` on files
+  like this one (the export is grouped by SKU, not sorted by date):
+
+      date,sku,kind,qty,unit_cost
+      2026-03-05,A,ship,5,
+      2026-03-01,A,receive,10,1.00
+
+  The shipment happened after the receipt, so this file is valid. Transactions must be
+  applied in date order; rows from the same day keep their order in the file.
+difficulty: complex
+split: test
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_date_order.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [inventory/io.py]

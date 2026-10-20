@@ -1,0 +1,13 @@
+diff --git b/inventory/ledger.py a/inventory/ledger.py
+index 8afa357..c0e7b10 100644
+--- b/inventory/ledger.py
++++ a/inventory/ledger.py
+@@ -25,6 +25,8 @@ class Ledger:
+         self._cogs: dict[str, Decimal] = {}
+ 
+     def receive(self, sku: str, qty: int, unit_cost: Decimal, at: date) -> None:
++        if qty <= 0:
++            raise ValueError("received quantity must be positive")
+         if unit_cost < 0:
+             raise ValueError("unit cost cannot be negative")
+         self._layers.setdefault(sku, deque()).append(Layer(qty, Decimal(unit_cost), at))

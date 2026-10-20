@@ -1,0 +1,17 @@
+id: textkit-005
+repo: textkit
+title: "wrap produces lines wider than the width"
+issue: |
+  The SMS renderer wraps at 10 columns, but a long URL comes out on one 21-character line:
+
+      wrap("see https://example.com/a ok", 10)
+      -> ["see", "https://example.com/a", "ok"]
+
+  No line may ever be longer than `width`; words that cannot fit have to be broken across
+  lines (the README promises this).
+difficulty: complex
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_wrap_long_words.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/wrap.py]

@@ -1,0 +1,17 @@
+id: textkit-001
+repo: textkit
+title: "slugify leaves doubled separators"
+issue: |
+  Our article URLs got ugly after the last textkit upgrade:
+
+      slugify("Hello, World!")  ->  "hello--world"
+      slugify("Q&A: tips & tricks")  ->  "q-a--tips---tricks"
+
+  A slug should never contain two separators in a row; any run of punctuation and
+  spaces becomes a single `-`.
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_slug_separators.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/slug.py]

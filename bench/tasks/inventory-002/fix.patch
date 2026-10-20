@@ -1,0 +1,14 @@
+diff --git b/inventory/ledger.py a/inventory/ledger.py
+index fd72794..c0e7b10 100644
+--- b/inventory/ledger.py
++++ a/inventory/ledger.py
+@@ -35,6 +35,9 @@ class Ledger:
+         """Remove `qty` units, oldest first (FIFO), and return their cost."""
+         if qty <= 0:
+             raise ValueError("shipped quantity must be positive")
++        available = self.on_hand(sku)
++        if qty > available:
++            raise InsufficientStock(f"{sku}: cannot ship {qty}, only {available} on hand")
+         layers = self._layers[sku]
+         remaining, cost = qty, Decimal("0")
+         while remaining:

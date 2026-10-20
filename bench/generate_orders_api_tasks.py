@@ -1,23 +1,8 @@
-"""Generate bench/tasks/orders-api-NNN from exact text replacements on the clean repo.
+"""Generate bench/tasks/orders-api-NNN. Run: python bench/generate_orders_api_tasks.py
 
-Run: python bench/generate_orders_api_tasks.py   (then: repopilot bench validate)
-
-bug.patch = clean -> buggy diff, fix.patch = its reverse (the minimal reference fix).
+Each task is an exact text replacement on the clean repo; see taskgen.py.
 """
-import shutil
-import subprocess
-import sys
-import tempfile
-import textwrap
-from pathlib import Path
-
-ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
-REPO = ROOT / "bench" / "repos" / "orders-api"
-TASKS = ROOT / "bench" / "tasks"
-GIT = ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf"]
-# Held-out test names plus the test infrastructure that decides how pytest runs them.
-PROTECTED = ('["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", '
-             '"pytest.ini", "setup.cfg", "tox.ini"]')
+from taskgen import write_tasks
 
 T = {}
 
@@ -208,7 +193,7 @@ T["006"] = dict(
 
 T["007"] = dict(
     title="Some order totals are one cent low",
-    difficulty="complex", split="dev", heldout="money_rounding",
+    difficulty="complex", split="test", heldout="money_rounding",
     expected_files=["app/pricing.py"],
     edits=[("app/pricing.py", '    return amount * (Decimal("1") + TAX_RATE)\n',
             "    return Decimal(float(amount) * (1 + float(TAX_RATE)))\n")],
@@ -351,54 +336,4 @@ T["010"] = dict(
 )
 
 
-def diff_for(edits) -> tuple[str, str]:
-    with tempfile.TemporaryDirectory() as tmp:
-        ws = Path(tmp) / "ws"
-        shutil.copytree(REPO, ws, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
-        subprocess.run([*GIT, "init", "-q"], cwd=ws, check=True)
-        subprocess.run([*GIT, "add", "-A"], cwd=ws, check=True)
-        subprocess.run([*GIT, "-c", "user.name=g", "-c", "user.email=g@x", "commit", "-qm", "c"],
-                       cwd=ws, check=True)
-        for rel, old, new in edits:
-            path = ws / rel
-            text = path.read_text(encoding="utf-8")
-            assert text.count(old) == 1, (rel, old)
-            path.write_bytes(text.replace(old, new).encode())
-        bug = subprocess.run([*GIT, "diff"], cwd=ws, check=True, capture_output=True).stdout
-        fix = subprocess.run([*GIT, "diff", "-R"], cwd=ws, check=True, capture_output=True).stdout
-        return bug.decode(), fix.decode()
-
-
-def yaml_block(text: str) -> str:
-    return "\n".join("  " + line if line else "" for line in textwrap.dedent(text).rstrip().splitlines())
-
-
-for num, spec in T.items():
-    task_id = f"orders-api-{num}"
-    d = TASKS / task_id
-    if d.exists():
-        shutil.rmtree(d)
-    (d / "heldout" / "tests").mkdir(parents=True)
-    bug, fix = diff_for(spec["edits"])
-    (d / "bug.patch").write_bytes(bug.encode())
-    (d / "fix.patch").write_bytes(fix.encode())
-    heldout_name = f"tests/test_heldout_{spec['heldout']}.py"
-    (d / "heldout" / heldout_name).write_bytes(textwrap.dedent(spec["test"]).encode())
-    # Scoring overwrites the test fixtures with pristine copies, so a conftest hook the agent
-    # adds cannot force held-out tests to pass.
-    shutil.copyfile(REPO / "tests" / "conftest.py", d / "heldout" / "tests" / "conftest.py")
-    expected = ", ".join(spec["expected_files"])
-    yaml = (
-        f"id: {task_id}\n"
-        f"repo: orders-api\n"
-        f"title: \"{spec['title']}\"\n"
-        f"issue: |\n{yaml_block(spec['issue'])}\n"
-        f"difficulty: {spec['difficulty']}\n"
-        f"split: {spec['split']}\n"
-        f"test_command: [pytest, -q]\n"
-        f"heldout_command: [pytest, -q, {heldout_name}]\n"
-        f"protected_paths: {PROTECTED}\n"
-        f"expected_files: [{expected}]\n"
-    )
-    (d / "task.yaml").write_bytes(yaml.encode())
-    print(task_id, len(bug), "bytes")
+write_tasks("orders-api", T)

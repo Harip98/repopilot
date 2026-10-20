@@ -1,0 +1,13 @@
+diff --git b/textkit/wrap.py a/textkit/wrap.py
+index e91ec9c..edb8fe7 100644
+--- b/textkit/wrap.py
++++ a/textkit/wrap.py
+@@ -3,7 +3,7 @@ def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
+     boundary when there is one."""
+     if len(text) <= limit:
+         return text
+-    room = limit
++    room = limit - len(ellipsis)
+     if room <= 0:
+         return ellipsis[:limit]
+     head = text[:room + 1]

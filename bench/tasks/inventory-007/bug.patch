@@ -1,0 +1,13 @@
+diff --git a/inventory/report.py b/inventory/report.py
+index 4e4303e..85a31ac 100644
+--- a/inventory/report.py
++++ b/inventory/report.py
+@@ -20,7 +20,7 @@ def report(ledger: Ledger, avg_daily_demand: dict[str, float], lead_time_days: i
+     for sku in ledger.skus():
+         on_hand = ledger.on_hand(sku)
+         rows.append(ReportRow(
+-            sku=sku, on_hand=on_hand, value=ledger.valuation(sku),
++            sku=sku, on_hand=on_hand, value=ledger.valuation(),
+             reorder=needs_reorder(on_hand, avg_daily_demand.get(sku, 0.0), lead_time_days,
+                                   safety_days),
+         ))

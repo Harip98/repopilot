@@ -1,0 +1,13 @@
+id: inventory-002
+repo: inventory
+title: "Overselling crashes and wipes stock"
+issue: |
+  When an order asks for more than we have, `ship()` blows up with `IndexError: deque
+  index out of range`, and afterwards the SKU shows 0 on hand even though nothing left
+  the building. It should raise `InsufficientStock` and leave the stock exactly as it was.
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_oversell.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [inventory/ledger.py]

@@ -1,0 +1,13 @@
+diff --git b/textkit/case.py a/textkit/case.py
+index 514a8b7..3bc7388 100644
+--- b/textkit/case.py
++++ a/textkit/case.py
+@@ -2,7 +2,7 @@ import re
+ 
+ # A boundary before an upper-case letter that follows a lower-case letter or digit
+ # (userName), and inside a run of capitals before the last one (HTTPServer -> HTTP|Server).
+-_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
++_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+ 
+ 
+ def camel_to_snake(name: str) -> str:

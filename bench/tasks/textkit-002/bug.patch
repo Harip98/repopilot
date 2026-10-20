@@ -1,0 +1,13 @@
+diff --git a/textkit/slug.py b/textkit/slug.py
+index ce19f43..b77b8df 100644
+--- a/textkit/slug.py
++++ b/textkit/slug.py
+@@ -7,7 +7,7 @@ _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+ def slugify(text: str, max_len: int | None = None, sep: str = "-") -> str:
+     """Lower-case ASCII slug. Accents are transliterated (é -> e), every run of other
+     characters becomes one `sep`, and `max_len` keeps whole words only."""
+-    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
++    ascii_text = text.encode("ascii", "ignore").decode("ascii")
+     slug = _NON_ALNUM.sub(sep, ascii_text.lower()).strip(sep)
+     if max_len is None or len(slug) <= max_len:
+         return slug

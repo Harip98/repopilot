@@ -1,0 +1,13 @@
+diff --git b/inventory/io.py a/inventory/io.py
+index 4205ace..a6a2c78 100644
+--- b/inventory/io.py
++++ a/inventory/io.py
+@@ -31,7 +31,7 @@ def load_transactions(path: Path) -> list[Transaction]:
+ 
+ def apply_transactions(ledger: Ledger, transactions: list[Transaction]) -> None:
+     """Apply in date order; same-day rows keep their file order (sorted() is stable)."""
+-    for tx in transactions:
++    for tx in sorted(transactions, key=lambda t: t.on):
+         if tx.kind == "receive":
+             ledger.receive(tx.sku, tx.qty, tx.unit_cost or Decimal("0"), tx.on)
+         elif tx.kind == "ship":

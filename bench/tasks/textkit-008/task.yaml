@@ -1,0 +1,17 @@
+id: textkit-008
+repo: textkit
+title: "camel_to_snake mangles acronyms"
+issue: |
+  Generated column names are wrong for identifiers that contain an acronym:
+
+      camel_to_snake("HTTPServerError")   ->  "httpserver_error"
+      camel_to_snake("parseXMLDocument")  ->  "parse_xmldocument"
+
+  Expected "http_server_error" and "parse_xml_document". Plain names like "userName"
+  and trailing acronyms like "userID" are fine.
+difficulty: complex
+split: test
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_case_acronyms.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/case.py]

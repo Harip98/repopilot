@@ -1,0 +1,13 @@
+id: inventory-001
+repo: inventory
+title: "Shipments are costed LIFO instead of FIFO"
+issue: |
+  Finance says cost of goods sold is too high. Example: receive 10 widgets at $2.00 on
+  1 March and 10 more at $3.00 on 5 March, then ship 5. `ship()` returns $15.00, but our
+  costing policy is FIFO, so those 5 units cost $10.00 and the stock left is worth $40.00.
+difficulty: complex
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_fifo.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [inventory/ledger.py]

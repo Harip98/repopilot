@@ -1,0 +1,20 @@
+diff --git a/inventory/ledger.py b/inventory/ledger.py
+index c0e7b10..f5a0475 100644
+--- a/inventory/ledger.py
++++ b/inventory/ledger.py
+@@ -41,13 +41,13 @@ class Ledger:
+         layers = self._layers[sku]
+         remaining, cost = qty, Decimal("0")
+         while remaining:
+-            layer = layers[0]
++            layer = layers[-1]
+             take = min(layer.qty, remaining)
+             cost += take * layer.unit_cost
+             layer.qty -= take
+             remaining -= take
+             if layer.qty == 0:
+-                layers.popleft()
++                layers.pop()
+         self._cogs[sku] = self._cogs.get(sku, Decimal("0")) + cost
+         return cost
+ 

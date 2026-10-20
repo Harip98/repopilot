@@ -1,0 +1,16 @@
+id: textkit-007
+repo: textkit
+title: "Trailing empty CSV fields are dropped"
+issue: |
+  Rows with an empty last column come back one field short:
+
+      parse_csv_line("a,b,")  ->  ["a", "b"]
+
+  so the importer shifts every column after it. Empty fields, including a trailing one
+  and an empty quoted one (`x,""`), must be kept: `["a", "b", ""]`.
+difficulty: simple
+split: test
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_csv_empty_fields.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/csvline.py]

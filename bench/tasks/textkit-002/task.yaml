@@ -1,0 +1,17 @@
+id: textkit-002
+repo: textkit
+title: "Accented letters disappear from slugs"
+issue: |
+  French and German titles lose letters in their slugs:
+
+      slugify("Crème brûlée")  ->  "crme-brle"
+      slugify("Ångström")      ->  "ngstrm"
+
+  Accented letters should become their plain ASCII letter ("creme-brulee",
+  "angstrom"), as the README says.
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_slug_accents.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/slug.py]

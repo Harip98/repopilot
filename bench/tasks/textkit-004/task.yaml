@@ -1,0 +1,13 @@
+id: textkit-004
+repo: textkit
+title: "truncate returns strings longer than the limit"
+issue: |
+  The card titles overflow: `truncate("supercalifragilistic", 10)` returns
+  "supercalif…", which is 11 characters. The database column is exactly as wide as the
+  limit, so inserts fail. The limit must include the ellipsis.
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_truncate_limit.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [textkit/wrap.py]

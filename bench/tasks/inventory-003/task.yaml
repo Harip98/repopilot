@@ -1,0 +1,13 @@
+id: inventory-003
+repo: inventory
+title: "Reorder point rounds down"
+issue: |
+  We ran out of brackets again. Average demand is 2.5 a day with a 3-day lead time, so we
+  need 7.5 units to cover the lead time, but `reorder_point(2.5, 3)` says 7. Partial
+  units have to round up (8), otherwise we always reorder a little too late.
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_reorder_rounding.py]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+expected_files: [inventory/reorder.py]

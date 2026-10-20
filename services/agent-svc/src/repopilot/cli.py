@@ -105,8 +105,12 @@ def _report(result, run_id: str) -> None:
         payload = result.interrupt
         typer.echo(f"\n--- diff ---\n{payload['diff']}--- tests: exit {payload['tests']['exit_code']} ---")
         typer.echo(payload["tests"]["output_tail"][-1500:])
+        if payload["tests"].get("passed_before_change"):
+            typer.echo("note: the test suite also passed before this change, so a green run "
+                       "alone does not show the issue is fixed")
         typer.echo(f"\nsummary: {payload['summary']}")
         typer.echo(f"awaiting approval: repopilot approve {run_id} [--reject --comment TEXT]")
+        typer.echo("the sandbox is reaped 2 h after the run started; approve before then")
         return
     u = state.usage
     typer.echo(f"status: {state.status}" + (f" ({state.failure_reason})" if state.failure_reason else ""))
@@ -115,16 +119,9 @@ def _report(result, run_id: str) -> None:
                f"retries {state.retries}")
 
 
-async def _finish(result, task, sandbox) -> None:
-    """Grade benchmark runs once they are over, then free the sandbox."""
-    from repopilot.agent.runner import grade
-
-    if result.interrupt is not None:
-        return
-    if task is not None and result.state.status in ("completed", "pr_opened"):
-        graded = await grade(task, sandbox, result.state.sandbox_id)
+def _report_grade(graded) -> None:
+    if graded is not None:
         typer.echo(f"held-out tests: {'PASS (resolved)' if graded.resolved else 'FAIL'}")
-    await sandbox.destroy(result.state.sandbox_id)
 
 
 @app.command()
@@ -135,13 +132,7 @@ def solve(
 ) -> None:
     """Run the agent on a benchmark task until it needs approval or finishes."""
     from repopilot.agent.pg_recorder import PgRecorder
-    from repopilot.agent.runner import (
-        new_run_id,
-        postgres_checkpointer,
-        prepare_bench_run,
-        run_async,
-        start_run,
-    )
+    from repopilot.agent.runner import new_run_id, postgres_checkpointer, run_async, run_bench_task
     from repopilot.bench.tasks import load_tasks
     from repopilot.config import get_settings
     from repopilot.sandbox_client import get_sandbox_client
@@ -154,18 +145,17 @@ def solve(
     async def run() -> None:
         dsn = get_settings().dsn()
         recorder = PgRecorder(dsn)
-        async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
-            deps = _deps(sandbox, recorder, model)
-            run_id = new_run_id()
-            state = await prepare_bench_run(task, sandbox, run_id=run_id, auto_approve=auto_approve)
-            await recorder.create_run(run_id, repo=task.repo, issue_text=task.issue,
-                                      task_id=task.id, issue_ref=None, model=deps.llm.model,
-                                      task_mode="bench", sandbox_id=state.sandbox_id)
-            typer.echo(f"run {run_id} ({task.id}, model {deps.llm.model})")
-            result = await start_run(state, deps, saver)
-            _report(result, run_id)
-            await _finish(result, task, sandbox)
-        await recorder.close()
+        try:
+            async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
+                deps = _deps(sandbox, recorder, model)
+                run_id = new_run_id()
+                typer.echo(f"run {run_id} ({task.id}, model {deps.llm.model})")
+                outcome = await run_bench_task(task, deps, saver, run_id=run_id,
+                                               auto_approve=auto_approve)
+                _report(outcome.result, run_id)
+                _report_grade(outcome.graded)
+        finally:
+            await recorder.close()
 
     run_async(run)
 
@@ -180,46 +170,67 @@ def approve(
     """Approve or reject a run that is waiting for review."""
     import getpass
 
-    import psycopg
-
     from repopilot.agent.pg_recorder import PgRecorder
     from repopilot.agent.runner import (
         NotAwaitingApproval,
         RunNotFound,
+        grade,
         postgres_checkpointer,
         resume_run,
         run_async,
     )
     from repopilot.bench.tasks import load_tasks
     from repopilot.config import get_settings
-    from repopilot.sandbox_client import get_sandbox_client
+    from repopilot.sandbox_client import SandboxError, get_sandbox_client
 
     dsn = get_settings().dsn()
-    with psycopg.connect(dsn) as conn:
-        row = conn.execute("SELECT status, model, task_id FROM runs WHERE id::text = %s",
-                           (run_id,)).fetchone()
-    if row is None or row[0] != "awaiting_approval":
-        typer.echo(f"run {run_id} is {'unknown' if row is None else row[0]}, not awaiting approval",
-                   err=True)
-        raise typer.Exit(1)
-    _, model, task_id = row
-    task = next((t for t in load_tasks() if t.id == task_id), None)
     decision = {"decision": "reject" if reject else "approve", "comment": comment,
                 "by": by or getpass.getuser()}
 
-    async def run() -> None:
+    async def run() -> bool:
         recorder = PgRecorder(dsn)
-        async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
-            try:
-                result = await resume_run(run_id, decision, _deps(sandbox, recorder, model), saver)
-            except (RunNotFound, NotAwaitingApproval) as exc:
-                typer.echo(str(exc), err=True)
-                raise typer.Exit(1) from None
-            _report(result, run_id)
-            await _finish(result, task, sandbox)
-        await recorder.close()
+        try:
+            # Claim first: of two concurrent `approve` commands only one may resume the run.
+            claimed = await recorder.claim_for_approval(run_id)
+            if claimed is None:
+                typer.echo(f"run {run_id} is unknown or not awaiting approval", err=True)
+                return False
+            task = next((t for t in load_tasks() if t.id == claimed["task_id"]), None)
+            async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
+                result = None
+                try:
+                    try:
+                        await sandbox.exec(claimed["sandbox_id"], ["git", "--version"])
+                    except SandboxError:
+                        await recorder.status(run_id, "failed", failure_reason="sandbox_expired")
+                        typer.echo("the run's sandbox has expired; start a new run", err=True)
+                        return False
+                    try:
+                        result = await resume_run(run_id, decision,
+                                                  _deps(sandbox, recorder, claimed["model"]), saver)
+                    except (RunNotFound, NotAwaitingApproval) as exc:
+                        typer.echo(str(exc), err=True)
+                        return False
+                    _report(result, run_id)
+                    if (task is not None and result.interrupt is None
+                            and result.state.status in ("completed", "pr_opened")):
+                        _report_grade(await grade(task, sandbox, claimed["sandbox_id"]))
+                except Exception as exc:
+                    await recorder.status(run_id, "failed", failure_reason="error",
+                                          error=f"{type(exc).__name__}: {exc}"[:2000])
+                    raise
+                finally:
+                    if result is None or result.interrupt is None:
+                        try:
+                            await sandbox.destroy(claimed["sandbox_id"])
+                        except SandboxError:
+                            pass
+            return True
+        finally:
+            await recorder.close()
 
-    run_async(run)
+    if not run_async(run):
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -231,7 +242,7 @@ def runs(limit: int = typer.Option(20, help="How many recent runs to show.")) ->
 
     with psycopg.connect(get_settings().dsn()) as conn:
         rows = conn.execute(
-            "SELECT id, coalesce(task_id, repo), status, coalesce(failure_reason, ''), model,"
+            "SELECT id, coalesce(task_id, repo), status, coalesce(failure_reason, ''), coalesce(model, ''),"
             " llm_calls, tool_calls, prompt_tokens + completion_tokens, created_at"
             " FROM runs ORDER BY created_at DESC LIMIT %s", (limit,)).fetchall()
     for r in rows:

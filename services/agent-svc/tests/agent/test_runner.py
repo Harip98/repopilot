@@ -36,3 +36,37 @@ async def test_approve_rejects_wrong_state():
     await start_run(make_state(auto_approve=True), _deps(sandbox, explore_and_edit()), saver)
     with pytest.raises(NotAwaitingApproval):
         await resume_run("run-1", {"decision": "approve", "by": "a"}, _deps(sandbox, []), saver)
+
+
+async def test_run_bench_task_cleans_up_on_error():
+    from repopilot.agent.runner import run_bench_task
+    from repopilot.bench.tasks import load_tasks
+
+    class Exploding:
+        model = "boom"
+
+        async def chat(self, messages, tools=None, max_tokens=2048):
+            raise RuntimeError("unexpected")
+
+    task = next(t for t in load_tasks() if t.id == "orders-api-005")
+    sandbox = ScriptedSandbox()
+    deps = _deps(sandbox, [])
+    deps.llm = Exploding()
+    with pytest.raises(RuntimeError):
+        await run_bench_task(task, deps, InMemorySaver(), run_id="11111111-1111-1111-1111-111111111111",
+                             auto_approve=True)
+    assert sandbox.destroyed == ["sbx-1"]
+    status, fields = deps.recorder.statuses[-1]
+    assert status == "failed" and "unexpected" in fields["error"]
+
+
+async def test_run_bench_task_grades_and_records_baseline():
+    from repopilot.agent.runner import run_bench_task
+    from repopilot.bench.tasks import load_tasks
+
+    task = next(t for t in load_tasks() if t.id == "orders-api-005")
+    sandbox = ScriptedSandbox({"app/store.py": STORE})
+    outcome = await run_bench_task(task, _deps(sandbox, explore_and_edit()), InMemorySaver(),
+                                   run_id="22222222-2222-2222-2222-222222222222", auto_approve=True)
+    assert outcome.result.state.baseline_tests_passed is True
+    assert outcome.graded is not None and sandbox.destroyed == ["sbx-1"]

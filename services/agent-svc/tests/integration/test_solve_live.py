@@ -6,7 +6,13 @@ import pytest
 from repopilot.agent.deps import RunDeps
 from repopilot.agent.pg_recorder import PgRecorder
 from repopilot.agent.pr import NoPR
-from repopilot.agent.runner import grade, new_run_id, postgres_checkpointer, prepare_bench_run, start_run
+from repopilot.agent.runner import (
+    grade,
+    new_run_id,
+    postgres_checkpointer,
+    prepare_bench_run,
+    start_run,
+)
 from repopilot.bench.tasks import load_tasks
 from repopilot.llm import FakeChatModel
 from repopilot.sandbox_client import get_sandbox_client

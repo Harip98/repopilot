@@ -1,6 +1,7 @@
 """Start, resume and grade agent runs; shared by the CLI, the eval harness and the API."""
 
 import asyncio
+import logging
 import sys
 import tempfile
 import uuid
@@ -23,6 +24,7 @@ from repopilot.bench.workspace import build_base_workspace
 from repopilot.sandbox_client import SandboxClient
 
 GRAPH = build_graph()
+log = logging.getLogger(__name__)
 
 
 class RunNotFound(LookupError):
@@ -80,12 +82,17 @@ async def prepare_bench_run(task: Task, sandbox: SandboxClient, *, run_id: str,
     with tempfile.TemporaryDirectory() as tmp:
         workspace = build_base_workspace(task, Path(tmp) / "ws")
         sandbox_id = await sandbox.create(image_for(task))
-        await sandbox.upload_dir(sandbox_id, workspace)
+        try:
+            await sandbox.upload_dir(sandbox_id, workspace)
+            baseline = await sandbox.exec(sandbox_id, task.test_command, timeout_s=300)
+        except BaseException:
+            await sandbox.destroy(sandbox_id)
+            raise
     return RunState(
         run_id=run_id, task_id=task.id, repo=task.repo, issue_title=task.title,
         issue_text=task.issue, sandbox_id=sandbox_id, test_command=task.test_command,
         protected_paths=task.protected_paths, auto_approve=auto_approve,
-        budget=budget or Budget(),
+        budget=budget or Budget(), baseline_tests_passed=baseline.exit_code == 0,
     )
 
 
@@ -113,3 +120,39 @@ async def grade(task: Task, sandbox: SandboxClient, sandbox_id: str) -> GradeRes
     res = await sandbox.exec(sandbox_id, task.heldout_command, timeout_s=300)
     return GradeResult(resolved=res.exit_code == 0, exit_code=res.exit_code,
                        output_tail=(res.stdout + res.stderr)[-4000:])
+
+
+@dataclass
+class BenchOutcome:
+    result: RunResult
+    graded: GradeResult | None  # None unless the run finished as completed or pr_opened
+
+
+async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpointSaver, *,
+                         run_id: str, auto_approve: bool, budget: Budget | None = None) -> BenchOutcome:
+    """Prepare, run and (when finished) grade one task. The sandbox is always destroyed unless
+    the run is paused for approval, and an unexpected error marks the run failed."""
+    state: RunState | None = None
+    result: RunResult | None = None
+    try:
+        state = await prepare_bench_run(task, deps.sandbox, run_id=run_id,
+                                        auto_approve=auto_approve, budget=budget)
+        await deps.recorder.create_run(run_id, repo=task.repo, issue_text=task.issue,
+                                       task_id=task.id, issue_ref=None, model=deps.llm.model,
+                                       task_mode="bench", sandbox_id=state.sandbox_id)
+        result = await start_run(state, deps, checkpointer)
+        graded = None
+        if result.interrupt is None and result.state.status in ("completed", "pr_opened"):
+            graded = await grade(task, deps.sandbox, state.sandbox_id)
+        return BenchOutcome(result=result, graded=graded)
+    except Exception as exc:
+        if state is not None:
+            await deps.recorder.status(run_id, "failed", failure_reason="error",
+                                       error=f"{type(exc).__name__}: {exc}"[:2000])
+        raise
+    finally:
+        if state is not None and (result is None or result.interrupt is None):
+            try:
+                await deps.sandbox.destroy(state.sandbox_id)
+            except Exception:
+                log.warning("could not destroy sandbox %s", state.sandbox_id, exc_info=True)

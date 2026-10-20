@@ -38,6 +38,12 @@ class ScriptedSandbox:
         self.execs: list[list[str]] = []
         self.destroyed: list[str] = []
 
+    async def create(self, image: str) -> str:
+        return "sbx-1"
+
+    async def upload_dir(self, sandbox_id: str, src) -> None:
+        pass
+
     async def read_file(self, sandbox_id: str, path: str) -> bytes:
         if path not in self.files:
             raise SandboxError("not_found", repr(path), 404)
@@ -52,12 +58,63 @@ class ScriptedSandbox:
         self.execs.append(list(argv))
         if argv[:2] == ["git", "diff"] and "--name-status" in argv:
             return _result(stdout="".join(f"M\x00{p}\x00" for p in self.changed))
-        if argv == ["git", "diff"]:
+        if argv in (["git", "diff"], ["git", "diff", "HEAD"]):
             return _result(stdout="".join(f"diff --git a/{p} b/{p}\n+changed\n" for p in self.changed))
         if list(argv[:len(self.test_command)]) == self.test_command:
             code, out = self.test_results.pop(0) if self.test_results else (0, "1 passed")
             return _result(code, out)
         return _result()
+
+    async def destroy(self, sandbox_id: str) -> None:
+        self.destroyed.append(sandbox_id)
+
+
+class GitDirSandbox:
+    """A real git repository in a host directory: git commands run for real, so diff and
+    status semantics match the sandbox. The test command returns a scripted result and can run
+    a hook first, standing in for test code that touches the workspace."""
+
+    def __init__(self, root, files: dict[str, bytes], test_command=("pytest", "-q")):
+        import subprocess
+
+        self.root, self.test_command = root, list(test_command)
+        self.on_test = None
+        self.test_results: list[tuple[int, str]] = []
+        self.destroyed: list[str] = []
+        for rel, data in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        for argv in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "base"]):
+            subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "user.name=t",
+                            "-c", "user.email=t@t", *argv], cwd=root, check=True,
+                           capture_output=True)
+
+    async def read_file(self, sandbox_id: str, path: str) -> bytes:
+        target = self.root / path
+        if not target.is_file():
+            raise SandboxError("not_found", repr(path), 404)
+        return target.read_bytes()
+
+    async def write_file(self, sandbox_id: str, path: str, data: bytes) -> None:
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    async def exec(self, sandbox_id, argv, timeout_s=120, cwd=None) -> ExecResult:
+        import subprocess
+
+        if list(argv[:len(self.test_command)]) == self.test_command:
+            if self.on_test:
+                self.on_test(self.root)
+            code, out = self.test_results.pop(0) if self.test_results else (0, "1 passed")
+            return _result(code, out)
+        if argv[0] != "git":
+            return _result()
+        proc = subprocess.run(  # noqa: ASYNC221 - test double; a blocking git call is fine here
+            ["git", "-c", "core.autocrlf=false", "-c", "core.quotepath=false", *argv[1:]],
+            cwd=self.root, capture_output=True, check=False)
+        return _result(proc.returncode, proc.stdout.decode(), proc.stderr.decode())
 
     async def destroy(self, sandbox_id: str) -> None:
         self.destroyed.append(sandbox_id)

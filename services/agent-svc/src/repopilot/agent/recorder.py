@@ -21,6 +21,10 @@ class ToolCallRecord:
 
 
 class Recorder(Protocol):
+    async def create_run(self, run_id: str, *, repo: str, issue_text: str, task_id: str | None,
+                         issue_ref: str | None, model: str, task_mode: str,
+                         sandbox_id: str | None = None) -> None: ...
+
     async def status(self, run_id: str, status: str, **fields: Any) -> None: ...
 
     async def event(self, run_id: str, node: str, kind: str, payload: dict) -> None: ...
@@ -41,6 +45,10 @@ class MemoryRecorder:
     statuses: list[tuple[str, dict]] = field(default_factory=list)
     events: list[tuple[str, str, dict]] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    runs: list[dict] = field(default_factory=list)
+
+    async def create_run(self, run_id: str, **fields: Any) -> None:
+        self.runs.append({"run_id": run_id} | fields)
 
     async def status(self, run_id: str, status: str, **fields: Any) -> None:
         self.statuses.append((status, fields))

@@ -42,11 +42,12 @@ class Harness:
         self.recorder = MemoryRecorder()
         self.saver = saver or InMemorySaver()
         self.graph = build_graph().compile(checkpointer=self.saver)
+        self.now = 1.0
 
     def deps(self, script: list) -> RunDeps:
         self.llm = FakeChatModel(script)
         return RunDeps(llm=self.llm, sandbox=self.sandbox, registry=build_registry(),
-                       recorder=self.recorder, pr=NoPR(), clock=lambda: 1.0)
+                       recorder=self.recorder, pr=NoPR(), clock=lambda: self.now)
 
     async def start(self, script: list, **state_kw) -> dict:
         state = make_state(**state_kw)
@@ -204,3 +205,122 @@ async def test_auto_approve_skips_interrupt():
     assert "__interrupt__" not in out
     final = RunState.model_validate(out)
     assert final.approval.by == "auto" and final.status == "completed"
+
+
+# --- validate against real git (review C1/I6) ---------------------------------------------
+
+GIT_FILES = {"app/store.py": STORE, "tests/test_store.py": b"def test_x():\n    pass\n",
+             "tests/conftest.py": b"import pytest\n"}
+PROTECTED = ["tests/test_heldout_*", "conftest.py", "*/conftest.py"]
+
+
+def git_harness(tmp_path) -> Harness:
+    from tests.fakes import GitDirSandbox
+
+    return Harness(sandbox=GitDirSandbox(tmp_path, GIT_FILES))
+
+
+async def test_validate_sees_deletions(tmp_path):
+    h = git_harness(tmp_path)
+    delete = ("diff --git a/tests/test_store.py b/tests/test_store.py\ndeleted file mode 100644\n"
+              "--- a/tests/test_store.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-def test_x():\n-    pass\n")
+    script = [tool_reply("submit_plan", **PLAN), tool_reply("apply_patch", patch=delete),
+              tool_reply("finish", summary="removed a test")]
+    out = await h.start(script, protected_paths=PROTECTED)
+    payload = out["__interrupt__"][0].value
+    assert "deleted file mode" in payload["diff"] and "tests/test_store.py" in payload["diff"]
+
+
+async def test_validate_rejects_protected_rename_by_test_code(tmp_path):
+    h = git_harness(tmp_path)
+    h.sandbox.on_test = lambda root: (root / "tests" / "conftest.py").rename(root / "tests" / "moved.py")
+    script = explore_and_edit()
+    final = RunState.model_validate(await h.start(script, protected_paths=PROTECTED, auto_approve=True))
+    assert final.status == "failed" and final.failure_reason == "protected_paths_changed"
+    assert "tests/conftest.py" in final.last_tests.violations
+
+
+async def test_validate_sees_ignored_files(tmp_path):
+    def plant(root):
+        (root / ".gitignore").write_bytes(b"conftest.py\n")
+        (root / "conftest.py").write_bytes(b"# forces passes\n")
+
+    h = git_harness(tmp_path)
+    h.sandbox.on_test = plant
+    final = RunState.model_validate(
+        await h.start(explore_and_edit(), protected_paths=PROTECTED, auto_approve=True))
+    assert final.status == "failed" and "conftest.py" in final.last_tests.violations
+
+
+# --- budgets (review I1/I2) ---------------------------------------------------------------
+
+
+async def test_one_turn_cannot_exceed_tool_budget():
+    from repopilot.llm import AssistantMessage, ChatResult, ToolCall, Usage
+
+    calls = [ToolCall(id=f"c{i}", name="read_file", arguments='{"path": "app/store.py"}')
+             for i in range(30)]
+    burst = ChatResult(message=AssistantMessage(tool_calls=calls), usage=Usage())
+    h = Harness()
+    final = RunState.model_validate(await h.start([burst], budget=Budget(max_tool_calls=5)))
+    assert len(h.recorder.tool_calls) == 5
+    assert final.status == "failed" and final.failure_reason == "budget:tool_calls"
+    skipped = [m for m in final.messages if m["role"] == "tool" and "budget exhausted" in m["content"]]
+    assert len(skipped) == 25
+
+
+async def test_review_wait_not_counted_against_time_budget():
+    h = Harness()
+    await h.start(explore_and_edit(), budget=Budget(max_seconds=100))
+    h.now = 5000.0  # the reviewer answered over an hour later
+    revise = [tool_reply("replace_text", path="app/store.py", old="status.lower() == wanted.lower()",
+                         new="status.casefold() == wanted.casefold()"),
+              tool_reply("finish", summary="casefold")]
+    out = await h.resume({"decision": "reject", "comment": "use casefold", "by": "bob"}, revise)
+    assert "__interrupt__" in out, out.get("failure_reason")
+    assert b"casefold" in h.sandbox.files["app/store.py"]
+
+
+# --- failures become outcomes (review I4) -------------------------------------------------
+
+
+class DownModel:
+    model = "down"
+
+    async def chat(self, messages, tools=None, max_tokens=2048):
+        import httpx
+        import openai
+
+        raise openai.APIConnectionError(request=httpx.Request("POST", "http://127.0.0.1:1/v1"))
+
+
+async def test_llm_api_error_fails_run():
+    h = Harness()
+    deps = h.deps([])
+    deps.llm = DownModel()
+    state = make_state()
+    out = await h.graph.ainvoke(state, {"configurable": {"thread_id": "run-1"}}, context=deps)
+    final = RunState.model_validate(out)
+    assert final.status == "failed" and final.failure_reason == "llm_error: APIConnectionError"
+    assert h.recorder.statuses[-1][0] == "failed"
+
+
+async def test_sandbox_error_in_validate_fails_run():
+    from repopilot.sandbox_client import SandboxError
+
+    h = Harness()
+
+    async def broken_exec(sandbox_id, argv, timeout_s=120, cwd=None):
+        raise SandboxError("not_found", "no such sandbox", 404)
+
+    final = None
+    original = h.sandbox.exec
+
+    async def exec_until_validate(sandbox_id, argv, timeout_s=120, cwd=None):
+        if argv[:3] == ["git", "add", "--intent-to-add"]:
+            return await broken_exec(sandbox_id, argv)
+        return await original(sandbox_id, argv, timeout_s, cwd)
+
+    h.sandbox.exec = exec_until_validate
+    final = RunState.model_validate(await h.start(explore_and_edit(), auto_approve=True))
+    assert final.status == "failed" and final.failure_reason == "sandbox_error: not_found"

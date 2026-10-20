@@ -65,6 +65,7 @@ class RunState(BaseModel):
     test_command: list[str]
     protected_paths: list[str] = Field(default_factory=list)
     auto_approve: bool = False
+    baseline_tests_passed: bool | None = None  # test command result before any change
 
     phase: Phase = "explore"
     route: Route = "llm"
@@ -83,6 +84,7 @@ class RunState(BaseModel):
     usage: RunUsage = Field(default_factory=RunUsage)
     budget: Budget = Field(default_factory=Budget)
     started_at: float = 0.0
+    validated_at: float = 0.0  # when the last validation ran; pauses for review start here
 
     approval: Approval | None = None
     status: RunStatus = "running"

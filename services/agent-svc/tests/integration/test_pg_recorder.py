@@ -83,3 +83,24 @@ def test_completed_status_allowed(conn: psycopg.Connection):
     assert run_id is not None
     with pytest.raises(psycopg.errors.CheckViolation):
         conn.execute("INSERT INTO runs (repo, issue_text, task_mode) VALUES ('r', 'i', 'nope')")
+
+
+async def test_claim_for_approval_is_exclusive(recorder, settings, conn: psycopg.Connection):
+    run_id = await _new_run(recorder)
+    await recorder.status(run_id, "awaiting_approval")
+    other = PgRecorder(settings.dsn())
+    try:
+        results = []
+
+        async def claim(rec):
+            results.append(await rec.claim_for_approval(run_id))
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(claim, recorder)
+            tg.start_soon(claim, other)
+    finally:
+        await other.close()
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1 and winners[0]["task_id"] == "orders-api-005"
+    assert conn.execute("SELECT status FROM runs WHERE id = %s", (run_id,)).fetchone()[0] == "running"
+    assert await recorder.claim_for_approval(str(uuid.uuid4())) is None

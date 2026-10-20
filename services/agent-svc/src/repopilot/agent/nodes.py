@@ -1,6 +1,7 @@
 """The agent graph's nodes. Each returns a partial state update and sets `route`, which the
 graph's conditional edges follow. One node execution is one checkpointed step."""
 
+import openai
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from repopilot.agent.deps import RunDeps
 from repopilot.agent.prompts import issue_message, system_prompt
 from repopilot.agent.state import Approval, Plan, RunState, TestReport, budget_exceeded
 from repopilot.llm.types import ToolCall, cost_usd
+from repopilot.sandbox_client import SandboxError
 from repopilot.tools.policy import ToolPolicy
 from repopilot.tools.registry import ToolContext
 
@@ -38,7 +40,11 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     if reason := budget_exceeded(state, deps.clock()):
         return {"failure_reason": f"budget:{reason}", "route": "fail"}
-    result = await deps.llm.chat(state.messages, tools_for(state, deps.registry))
+    try:
+        result = await deps.llm.chat(state.messages, tools_for(state, deps.registry))
+    except openai.APIError as exc:  # the client already retried; the run cannot continue
+        await deps.recorder.event(state.run_id, "llm", "error", {"error": str(exc)[:1000]})
+        return {"failure_reason": f"llm_error: {type(exc).__name__}", "route": "fail"}
     reply = result.message
     message = reply.to_dict()
     if message["content"] is None and not reply.tool_calls:
@@ -104,6 +110,9 @@ async def tools(state: RunState, runtime: Runtime[RunDeps]) -> dict:
                     summary, finish_called = args.summary, True
                     content = "Submitted for validation."
             await deps.recorder.event(state.run_id, "tools", call.name, {"arguments": call.arguments})
+        elif reason := budget_exceeded(state.model_copy(update={"usage": usage}), deps.clock()):
+            # One reply may request many calls; the budget holds within a turn too.
+            content = f"ERROR: budget exhausted ({reason}); this call was not run."
         else:
             usage.tool_calls += 1
             outcome = await deps.registry.dispatch(ctx, call.name, call.arguments)
@@ -131,33 +140,63 @@ def parse_name_status_z(out: str) -> list[str]:
     return paths
 
 
-async def validate(state: RunState, runtime: Runtime[RunDeps]) -> dict:
-    """Harness-side check; the model's claim that it is done is never trusted."""
-    deps = runtime.context
-    sb, sid = deps.sandbox, state.sandbox_id
+_CACHE_PARTS = {"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
+
+
+def _is_cache(path: str) -> bool:
+    return path.endswith(".pyc") or any(p in _CACHE_PARTS for p in path.split("/"))
+
+
+async def _workspace_changes(sb, sid: str) -> tuple[str, list[str]]:
+    """The full change against HEAD: edits, new files, deletions, both sides of renames, and
+    files hidden by .gitignore (an ignored conftest.py still runs under pytest)."""
     await sb.exec(sid, ["git", "add", "--intent-to-add", "--all"])
-    diff = (await sb.exec(sid, ["git", "diff"])).stdout
+    # Against HEAD, not the index: intent-to-add also stages deletions, which a plain
+    # `git diff` would then hide.
+    diff = (await sb.exec(sid, ["git", "diff", "HEAD"])).stdout
     changed = parse_name_status_z(
-        (await sb.exec(sid, ["git", "diff", "--name-status", "-M", "-z"])).stdout)
+        (await sb.exec(sid, ["git", "diff", "HEAD", "--name-status", "-M", "-z"])).stdout)
+    ignored = (await sb.exec(sid, ["git", "ls-files", "-o", "-i", "--exclude-standard", "-z"])).stdout
+    changed += [p for p in ignored.split("\x00") if p and not _is_cache(p)]
+    return diff, sorted(set(changed))
+
+
+async def validate(state: RunState, runtime: Runtime[RunDeps]) -> dict:
+    """Harness-side check; the model's claim that it is done is never trusted. The workspace
+    is checked before the tests and again after them, since test code can touch files too."""
+    try:
+        return await _validate(state, runtime.context)
+    except SandboxError as exc:  # e.g. the sandbox was reaped
+        return {"failure_reason": f"sandbox_error: {exc.code}", "finish_called": False,
+                "route": "fail"}
+
+
+async def _validate(state: RunState, deps: RunDeps) -> dict:
+    sb, sid = deps.sandbox, state.sandbox_id
     policy = ToolPolicy(state.protected_paths)
+    diff, changed = await _workspace_changes(sb, sid)
     violations = [p for p in changed if policy.check_write(p)]
+    report: TestReport
+    if not violations and not diff.strip():
+        report = TestReport(passed=False, reason="no_changes")
+    elif not violations:
+        res = await sb.exec(sid, state.test_command, timeout_s=TEST_TIMEOUT_S)
+        diff, changed = await _workspace_changes(sb, sid)
+        violations = [p for p in changed if policy.check_write(p)]
+        report = TestReport(
+            passed=res.exit_code == 0, reason=None if res.exit_code == 0 else "tests_failing",
+            exit_code=res.exit_code, output_tail=(res.stdout + res.stderr)[-OUTPUT_TAIL:],
+            changed_files=changed,
+        )
     usage = state.usage
     if violations:
         report = TestReport(passed=False, reason="protected_paths_changed",
                             changed_files=changed, violations=violations)
         usage = usage.model_copy(
             update={"unauthorized_attempts": usage.unauthorized_attempts + len(violations)})
-    elif not diff.strip():
-        report = TestReport(passed=False, reason="no_changes")
-    else:
-        res = await sb.exec(sid, state.test_command, timeout_s=TEST_TIMEOUT_S)
-        report = TestReport(
-            passed=res.exit_code == 0, reason=None if res.exit_code == 0 else "tests_failing",
-            exit_code=res.exit_code, output_tail=(res.stdout + res.stderr)[-OUTPUT_TAIL:],
-            changed_files=changed,
-        )
     await deps.recorder.event(state.run_id, "validate", "report", report.model_dump())
-    update = {"diff": diff, "last_tests": report, "usage": usage, "finish_called": False}
+    update = {"diff": diff, "last_tests": report, "usage": usage, "finish_called": False,
+              "validated_at": deps.clock()}
     if report.passed:
         return update | {"route": "approval"}
     if report.reason != "protected_paths_changed" and state.retries < state.budget.max_retries:
@@ -190,17 +229,25 @@ async def approval(state: RunState, runtime: Runtime[RunDeps]) -> dict:
             "run_id": state.run_id, "diff": state.diff, "summary": state.summary,
             "plan": state.plan.model_dump() if state.plan else None,
             "tests": {"exit_code": tests.exit_code if tests else None,
-                      "output_tail": tests.output_tail if tests else ""},
+                      "output_tail": tests.output_tail if tests else "",
+                      # True means a green suite says little: it was green before the change.
+                      "passed_before_change": state.baseline_tests_passed},
         })
         decision = Approval.model_validate(value)
-    await deps.recorder.event(state.run_id, "approval", decision.decision, decision.model_dump())
+    # Time spent waiting for the reviewer is not agent time: shift the clock's origin by it.
+    paused = 0.0 if state.auto_approve else max(0.0, deps.clock() - state.validated_at)
+    started_at = state.started_at + paused
+    await deps.recorder.event(state.run_id, "approval", decision.decision,
+                              decision.model_dump() | {"waited_s": round(paused, 1)})
     if decision.decision == "approve":
-        return {"approval": decision, "status": "approved", "route": "open_pr"}
+        return {"approval": decision, "status": "approved", "route": "open_pr",
+                "started_at": started_at}
     if decision.comment and state.revisions < 1:
+        await deps.recorder.status(state.run_id, "running")
         note = _user(f"The reviewer rejected the change: {decision.comment}\nRevise it, run the "
                      "tests, and call finish again.")
         return {"approval": decision, "messages": [*state.messages, note],
-                "revisions": state.revisions + 1, "route": "llm"}
+                "revisions": state.revisions + 1, "route": "llm", "started_at": started_at}
     return {"approval": decision, "status": "rejected", "route": "record"}
 
 

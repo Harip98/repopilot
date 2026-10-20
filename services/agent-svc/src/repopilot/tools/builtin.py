@@ -128,7 +128,8 @@ class NoArgs(BaseModel):
 async def git_diff(ctx: ToolContext, a: NoArgs) -> str:
     # Intent-to-add makes new files show up in the diff without staging their content.
     await ctx.sandbox.exec(ctx.sandbox_id, ["git", "add", "--intent-to-add", "--all"])
-    res = await ctx.sandbox.exec(ctx.sandbox_id, ["git", "diff"])
+    # Against HEAD: intent-to-add stages deletions, which a plain `git diff` would hide.
+    res = await ctx.sandbox.exec(ctx.sandbox_id, ["git", "diff", "HEAD"])
     if res.exit_code != 0:
         raise ToolError(res.stderr.strip() or "git diff failed")
     return res.stdout or "(no changes)"

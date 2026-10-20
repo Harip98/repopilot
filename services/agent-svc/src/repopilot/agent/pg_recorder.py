@@ -47,6 +47,18 @@ class PgRecorder:
                 (run_id, repo, issue_text, task_id, issue_ref, model, task_mode, sandbox_id),
             )
 
+    async def claim_for_approval(self, run_id: str) -> dict | None:
+        """Atomically move a run from awaiting_approval to running. Exactly one concurrent
+        caller gets the run's details; everyone else gets None and must not resume it."""
+        async with self._use() as conn:
+            cur = await conn.execute(
+                "UPDATE runs SET status = 'running' WHERE id::text = %s"
+                " AND status = 'awaiting_approval' RETURNING model, task_id, sandbox_id",
+                (run_id,),
+            )
+            row = await cur.fetchone()
+        return None if row is None else {"model": row[0], "task_id": row[1], "sandbox_id": row[2]}
+
     async def status(self, run_id: str, status: str, **fields: Any) -> None:
         sets, params = ["status = %s"], [status]
         for key in ("failure_reason", "pr_url", "retries", "trace_id", "error"):

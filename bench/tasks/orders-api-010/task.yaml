@@ -1,0 +1,15 @@
+id: orders-api-010
+repo: orders-api
+title: "Retried POST /orders with the same Idempotency-Key creates a duplicate"
+issue: |
+  The mobile app retries `POST /orders` with the same `Idempotency-Key` header when a
+  request times out. Since the last release some customers end up with two identical
+  orders. A repeated key should return the original order (status 200) and must not create
+  a new one.
+commit_message: "Refactor order creation"
+difficulty: complex
+split: test
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_idempotency.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/store.py]

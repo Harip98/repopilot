@@ -1,0 +1,13 @@
+diff --git a/app/store.py b/app/store.py
+index e4dc0f6..c912014 100644
+--- a/app/store.py
++++ b/app/store.py
+@@ -57,7 +57,7 @@ class OrderStore:
+         if status:
+             wanted = status.lower()
+             orders = [o for o in orders if o.status.value == wanted]
+-        descending = sort.startswith("-")
++        descending = sort.endswith("-")
+         key = sort.lstrip("-")
+         if key not in SORT_KEYS:
+             raise ValueError(f"cannot sort by {sort!r}")

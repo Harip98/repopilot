@@ -57,3 +57,29 @@ def bench_build_images() -> None:
         tag = "repopilot-sandbox-base" if name == "base" else f"repopilot-bench-{name}"
         typer.echo(f"building {tag}")
         subprocess.run(["docker", "build", "-q", "-t", tag, str(images / name)], check=True)
+
+
+@bench_app.command("validate")
+def bench_validate(task_id: str | None = typer.Option(None, "--task", help="Only this task.")) -> None:
+    """Check every task: bug applies, held-out tests fail on it, reference fix passes them."""
+    import anyio
+
+    from repopilot.bench.tasks import load_tasks
+    from repopilot.bench.validate import validate_task
+    from repopilot.sandbox_client import get_sandbox_client
+
+    tasks = [t for t in load_tasks() if task_id in (None, t.id)]
+
+    async def run() -> bool:
+        ok = True
+        async with get_sandbox_client() as sandbox:
+            for task in tasks:
+                r = await validate_task(task, sandbox)
+                ok &= r.valid
+                typer.echo(f"{task.id}\t{'valid' if r.valid else 'INVALID'}\t"
+                           f"visible_on_base={'pass' if r.visible_pass_on_base else 'fail'}"
+                           + ("" if r.valid else f"\n{r.detail}"))
+        return ok
+
+    if not anyio.run(run):
+        raise typer.Exit(1)

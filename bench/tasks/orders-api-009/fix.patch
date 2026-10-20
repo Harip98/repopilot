@@ -1,0 +1,13 @@
+diff --git b/app/store.py a/app/store.py
+index 17cbac9..e4dc0f6 100644
+--- b/app/store.py
++++ a/app/store.py
+@@ -28,7 +28,7 @@ class OrderStore:
+         order = Order(
+             id=self._next_id, customer=data.customer, status=status, items=data.items,
+             discount_pct=data.discount_pct, created_at=created_at,
+-            subtotal=round_money(sum((i.unit_price * i.quantity for i in data.items), Decimal("0"))),
++            subtotal=round_money(subtotal(data.items)),
+             total=order_total(data.items, data.discount_pct),
+         )
+         self._orders[order.id] = order

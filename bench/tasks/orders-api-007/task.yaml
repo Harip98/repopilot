@@ -1,0 +1,18 @@
+id: orders-api-007
+repo: orders-api
+title: "Some order totals are one cent low"
+issue: |
+  Finance found orders whose total is one cent lower than our invoicing system. Two
+  examples, no discount:
+
+  - one item at $10.00: invoicing says $10.83, the API says $10.82
+  - one item at $18.00: invoicing says $19.49, the API says $19.48
+
+  Most orders match. Totals should be exact and rounded half-up to the cent.
+commit_message: "Use float multiplication for tax (perf)"
+difficulty: complex
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_money_rounding.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/pricing.py]

@@ -1,0 +1,13 @@
+diff --git a/app/store.py b/app/store.py
+index e4dc0f6..e6e42e2 100644
+--- a/app/store.py
++++ b/app/store.py
+@@ -5,7 +5,7 @@ from threading import Lock
+ from app.models import LineItem, Order, OrderCreate, OrderStatus
+ from app.pricing import order_total, round_money, subtotal
+ 
+-CANCELLABLE = {OrderStatus.PENDING, OrderStatus.PAID}
++CANCELLABLE = {OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED}
+ SORT_KEYS = {"created_at", "total"}
+ 
+ 

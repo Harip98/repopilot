@@ -1,0 +1,13 @@
+diff --git b/app/store.py a/app/store.py
+index 0438fa1..e4dc0f6 100644
+--- b/app/store.py
++++ a/app/store.py
+@@ -42,6 +42,8 @@ class OrderStore:
+             if idempotency_key is not None and idempotency_key in self._idempotency:
+                 return self._orders[self._idempotency[idempotency_key]], False
+             order = self._build(data, OrderStatus.PENDING, now or datetime.now(UTC))
++            if idempotency_key is not None:
++                self._idempotency[idempotency_key] = order.id
+             return order, True
+ 
+     def get(self, order_id: int) -> Order:

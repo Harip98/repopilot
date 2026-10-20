@@ -1,0 +1,16 @@
+id: orders-api-001
+repo: orders-api
+title: "Order list never shows the last partial page"
+issue: |
+  The storefront order history stops early. We have 57 orders and request
+  `GET /orders?page_size=20`; the response says `"pages": 2`, so the UI only offers pages
+  1 and 2 and the last 17 orders are never reachable from the pager.
+
+  Expected `pages` to be 3 here. Probably started after last week's pagination cleanup.
+commit_message: "Simplify page count calculation"
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_pagination_pages.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/pagination.py]

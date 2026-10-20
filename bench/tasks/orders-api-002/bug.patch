@@ -1,0 +1,13 @@
+diff --git a/app/pagination.py b/app/pagination.py
+index 5a2aaf5..0d459a6 100644
+--- a/app/pagination.py
++++ b/app/pagination.py
+@@ -20,7 +20,7 @@ def clamp_page_size(page_size: int | None) -> int:
+         return DEFAULT_PAGE_SIZE
+     if page_size < 1:
+         raise PaginationError("page_size must be at least 1")
+-    return min(page_size, MAX_PAGE_SIZE)
++    return page_size
+ 
+ 
+ def paginate[T](items: Sequence[T], page: int, page_size: int | None) -> Page[T]:

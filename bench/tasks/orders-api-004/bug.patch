@@ -1,0 +1,13 @@
+diff --git a/app/pricing.py b/app/pricing.py
+index 00baaf7..5f53ca3 100644
+--- a/app/pricing.py
++++ b/app/pricing.py
+@@ -20,7 +20,7 @@ def subtotal(items: Iterable[LineItem]) -> Decimal:
+ 
+ 
+ def apply_discount(amount: Decimal, discount_pct: Decimal) -> Decimal:
+-    return amount * (Decimal("100") - discount_pct) / Decimal("100")
++    return amount - discount_pct
+ 
+ 
+ def add_tax(amount: Decimal) -> Decimal:

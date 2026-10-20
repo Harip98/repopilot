@@ -1,0 +1,14 @@
+id: orders-api-005
+repo: orders-api
+title: "Status filter only matches lowercase values"
+issue: |
+  The admin dashboard sends `GET /orders?status=PAID` and gets `"total": 0`, while
+  `status=paid` returns plenty of orders. Status values should be matched
+  case-insensitively; this used to work.
+commit_message: "Tidy up status filter"
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_status_case.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/store.py]

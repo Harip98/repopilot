@@ -1,0 +1,13 @@
+diff --git a/app/pagination.py b/app/pagination.py
+index 5a2aaf5..a72fbb9 100644
+--- a/app/pagination.py
++++ b/app/pagination.py
+@@ -12,7 +12,7 @@ class PaginationError(ValueError):
+ 
+ def page_count(total: int, page_size: int) -> int:
+     """Number of pages needed to show `total` items, `page_size` at a time."""
+-    return (total + page_size - 1) // page_size
++    return total // page_size
+ 
+ 
+ def clamp_page_size(page_size: int | None) -> int:

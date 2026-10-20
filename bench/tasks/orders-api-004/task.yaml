@@ -1,0 +1,16 @@
+id: orders-api-004
+repo: orders-api
+title: "Percentage discounts are taken off as dollars"
+issue: |
+  Customers with a 10% coupon are complaining. A $200.00 order with `discount_pct: 10`
+  comes out at $205.68 instead of $194.85, i.e. only $10 was taken off before tax. On a
+  $5.00 order the same coupon makes the total negative.
+
+  `discount_pct` is a percentage (0-100), applied before tax.
+commit_message: "Inline discount arithmetic"
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_discount.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/pricing.py]

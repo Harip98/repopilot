@@ -1,0 +1,14 @@
+diff --git b/app/pagination.py a/app/pagination.py
+index 5bf27c3..5a2aaf5 100644
+--- b/app/pagination.py
++++ a/app/pagination.py
+@@ -27,9 +27,6 @@ def paginate[T](items: Sequence[T], page: int, page_size: int | None) -> Page[T]
+     if page < 1:
+         raise PaginationError("page must be at least 1")
+     size = clamp_page_size(page_size)
+-    pages = page_count(len(items), size)
+-    if page > pages:
+-        raise IndexError(f"page {page} is out of range")
+     start = (page - 1) * size
+     return Page[T](
+         items=list(items[start:start + size]),

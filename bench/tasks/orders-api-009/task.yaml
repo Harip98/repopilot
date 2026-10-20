@@ -1,0 +1,15 @@
+id: orders-api-009
+repo: orders-api
+title: "Order subtotal includes cancelled line items"
+issue: |
+  Customers who remove gift wrap from an order still see it in the order summary. Order 1
+  has a cancelled GIFT-WRAP line ($2.50), yet `GET /orders/1` shows `"subtotal": "12.49"`.
+  The `total` looks right, so the two fields disagree. Cancelled lines must not count
+  towards the subtotal anywhere.
+commit_message: "Compute stored subtotal inline"
+difficulty: complex
+split: test
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_cancelled_lines.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/store.py]

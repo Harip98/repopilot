@@ -1,0 +1,13 @@
+diff --git a/app/store.py b/app/store.py
+index e4dc0f6..5d93f37 100644
+--- a/app/store.py
++++ b/app/store.py
+@@ -55,7 +55,7 @@ class OrderStore:
+     def list(self, status: str | None = None, sort: str = "created_at") -> list[Order]:
+         orders = list(self._orders.values())
+         if status:
+-            wanted = status.lower()
++            wanted = status
+             orders = [o for o in orders if o.status.value == wanted]
+         descending = sort.startswith("-")
+         key = sort.lstrip("-")

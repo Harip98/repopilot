@@ -1,0 +1,16 @@
+id: orders-api-002
+repo: orders-api
+title: "page_size above 100 is not capped"
+issue: |
+  The README says `page_size` is capped at 100, but `GET /orders?page_size=5000` happily
+  returns everything in one response and echoes `"page_size": 5000`. One integration is
+  now pulling the whole table every minute.
+
+  Requests above the maximum should be served with `page_size` 100.
+commit_message: "Let API clients choose their page size"
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_page_size_cap.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/pagination.py]

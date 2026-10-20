@@ -1,0 +1,14 @@
+id: orders-api-003
+repo: orders-api
+title: "sort=-created_at returns oldest orders first"
+issue: |
+  `GET /orders?sort=-created_at` should list the newest orders first (that is what the
+  leading `-` means everywhere else in our APIs), but it returns them oldest first, exactly
+  like `sort=created_at`. `sort=-total` has the same problem.
+commit_message: "Parse sort direction prefix"
+difficulty: simple
+split: dev
+test_command: [pytest, -q]
+heldout_command: [pytest, -q, tests/test_heldout_sort_direction.py]
+protected_paths: ["tests/test_heldout_*"]
+expected_files: [app/store.py]

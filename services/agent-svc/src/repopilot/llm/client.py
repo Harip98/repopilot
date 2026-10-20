@@ -51,6 +51,7 @@ class OpenAICompatChat:
         )
 
 
-def get_chat_model() -> OpenAICompatChat:
+def get_chat_model(model: str | None = None) -> OpenAICompatChat:
     s = get_settings()
-    return OpenAICompatChat(s.llm_base_url, s.llm_api_key.get_secret_value(), s.llm_model, s.llm_timeout_s)
+    return OpenAICompatChat(s.llm_base_url, s.llm_api_key.get_secret_value(), model or s.llm_model,
+                            s.llm_timeout_s)

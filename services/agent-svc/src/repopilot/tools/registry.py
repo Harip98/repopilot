@@ -68,12 +68,12 @@ def truncate(text: str, limit: int = MAX_CONTENT) -> str:
     return f"{text[:limit]}\n…[truncated {len(text) - limit} chars]"
 
 
-def _drop_titles(schema: Any) -> Any:
+def drop_titles(schema: Any) -> Any:
     """Pydantic adds a title to every node; they cost tokens and tell the model nothing."""
     if isinstance(schema, dict):
-        return {k: _drop_titles(v) for k, v in schema.items() if k != "title"}
+        return {k: drop_titles(v) for k, v in schema.items() if k != "title"}
     if isinstance(schema, list):
-        return [_drop_titles(v) for v in schema]
+        return [drop_titles(v) for v in schema]
     return schema
 
 
@@ -96,7 +96,7 @@ class ToolRegistry:
     def specs(self) -> list[ToolSpec]:
         return [
             ToolSpec(name=t.name, description=t.description,
-                     parameters=_drop_titles(t.args_model.model_json_schema()))
+                     parameters=drop_titles(t.args_model.model_json_schema()))
             for t in self._tools.values()
         ]
 

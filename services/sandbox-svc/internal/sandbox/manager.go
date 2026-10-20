@@ -251,7 +251,7 @@ func (m *Manager) Exec(ctx context.Context, id string, req ExecRequest) (ExecRes
 		}
 		workdir += "/" + clean
 	}
-	timeout := clampTimeout(req.TimeoutS)
+	timeout := ClampTimeout(req.TimeoutS)
 	argv := append([]string{"timeout", "-k", killGraceSeconds, strconv.Itoa(timeout) + "s"}, req.Argv...)
 
 	deadline := time.Duration(timeout)*time.Second + m.backstopGrace

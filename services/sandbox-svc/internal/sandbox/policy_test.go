@@ -57,8 +57,8 @@ func TestValidateArgv(t *testing.T) {
 
 func TestClampTimeout(t *testing.T) {
 	for in, want := range map[int]int{0: 120, -5: 120, 1: 1, 300: 300, 600: 600, 9999: 600} {
-		if got := clampTimeout(in); got != want {
-			t.Errorf("clampTimeout(%d) = %d, want %d", in, got, want)
+		if got := ClampTimeout(in); got != want {
+			t.Errorf("ClampTimeout(%d) = %d, want %d", in, got, want)
 		}
 	}
 }

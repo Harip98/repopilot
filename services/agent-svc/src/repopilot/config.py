@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     pg_password: SecretStr = SecretStr("repopilot_dev_pw")
     redis_url: str = "redis://127.0.0.1:6380/0"
     sandbox_url: str = "http://127.0.0.1:8090"
+    sandbox_token: SecretStr = SecretStr("dev-sandbox-token-change-me")  # matches compose default
     llm_base_url: str = "https://api.openai.com/v1"  # any OpenAI-compatible API, incl. Ollama /v1
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = "gpt-4.1-mini"

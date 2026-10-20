@@ -30,8 +30,9 @@ def test_dsn_contents(monkeypatch: pytest.MonkeyPatch):
 
 def test_secrets_hidden_from_repr():
     s = Settings(_env_file=None, github_token="ghp_SECRET1", llm_api_key="sk-SECRET2",
-                 pg_password="pw-SECRET3")
+                 pg_password="pw-SECRET3", sandbox_token="sbx-SECRET4-0123456789")
     text = repr(s) + str(s)
-    for secret in ("ghp_SECRET1", "sk-SECRET2", "pw-SECRET3"):
+    for secret in ("ghp_SECRET1", "sk-SECRET2", "pw-SECRET3", "sbx-SECRET4-0123456789"):
         assert secret not in text
     assert "password=pw-SECRET3" in s.dsn()
+    assert s.sandbox_token.get_secret_value() == "sbx-SECRET4-0123456789"

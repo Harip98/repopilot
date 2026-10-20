@@ -30,6 +30,24 @@ services:
       timeout: 3s
       retries: 20
 
+  # The only process with the Docker socket. Socket access is root-equivalent on the host,
+  # which is why this service is small, authenticated, loopback-only and locked down itself.
+  sandbox-svc:
+    build: ./services/sandbox-svc
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      SANDBOX_TOKEN: ${REPOPILOT_SANDBOX_TOKEN:-dev-sandbox-token-change-me}
+      SANDBOX_IMAGE_PREFIXES: "repopilot-"
+      SANDBOX_TTL: "2h"
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   pgdata:
   redisdata:

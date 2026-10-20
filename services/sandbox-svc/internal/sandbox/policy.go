@@ -75,7 +75,8 @@ func validateArgv(argv []string) error {
 	return nil
 }
 
-func clampTimeout(s int) int {
+// ClampTimeout applies the exec timeout default (120s) and ceiling (600s).
+func ClampTimeout(s int) int {
 	switch {
 	case s <= 0:
 		return defaultTimeoutS

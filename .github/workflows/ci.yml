@@ -64,3 +64,17 @@ jobs:
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
+
+  sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: docker build -t repopilot-sandbox-base bench/images/base
+      - run: docker compose up -d --build --wait sandbox-svc
+      - run: uv sync --locked
+        working-directory: services/agent-svc
+      - run: uv run pytest -m sandbox -v
+        working-directory: services/agent-svc
+      - if: failure()
+        run: docker compose logs sandbox-svc

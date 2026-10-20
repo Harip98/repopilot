@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Kill every process in this sandbox except init (PID 1), the container's main process and
+this script. sandbox-svc runs it when an exec's output stream outlives its timeout (a
+background child holding stdout open), so the workspace survives without a restart."""
+
+import os
+import signal
+
+
+def parent_of(pid: int) -> int:
+    try:
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    return -1
+
+
+def main() -> None:
+    me = os.getpid()
+    pids = sorted(int(p) for p in os.listdir("/proc") if p.isdigit())
+    # The main process (`sleep infinity`) is init's first child, so it has the lowest PID of
+    # init's children; orphans reparented to init later always have higher PIDs.
+    main_pid = next((p for p in pids if p != 1 and parent_of(p) == 1), None)
+    for pid in pids:
+        if pid in (1, me, main_pid):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+if __name__ == "__main__":
+    main()

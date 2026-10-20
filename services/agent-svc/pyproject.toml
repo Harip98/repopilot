@@ -26,8 +26,11 @@ packages = ["src/repopilot"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-m", "not integration"]
-markers = ["integration: needs docker compose Postgres/Redis (run with -m integration)"]
+addopts = ["-m", "not integration and not sandbox"]
+markers = [
+    "integration: needs docker compose Postgres/Redis (run with -m integration)",
+    "sandbox: needs compose sandbox-svc and the repopilot-sandbox-base image (run with -m sandbox)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -206,6 +206,8 @@ var errorCodes = []struct {
 	{sandbox.ErrBadArgv, http.StatusBadRequest, "bad_argv"},
 	{sandbox.ErrNotFound, http.StatusNotFound, "not_found"},
 	{sandbox.ErrTooLarge, http.StatusRequestEntityTooLarge, "too_large"},
+	{sandbox.ErrBadArchive, http.StatusBadRequest, "bad_archive"},
+	{sandbox.ErrSandboxExhausted, http.StatusConflict, "sandbox_exhausted"},
 }
 
 // fail maps manager errors to HTTP. Unknown errors are logged and answered without detail.

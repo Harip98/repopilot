@@ -153,6 +153,8 @@ func TestErrorMapping(t *testing.T) {
 		{sandbox.ErrBadArgv, 400, "bad_argv"},
 		{sandbox.ErrNotFound, 404, "not_found"},
 		{sandbox.ErrTooLarge, 413, "too_large"},
+		{sandbox.ErrBadArchive, 400, "bad_archive"},
+		{sandbox.ErrSandboxExhausted, 409, "sandbox_exhausted"},
 		{fmt.Errorf("docker exploded: secret detail"), 500, "internal"},
 	}
 	for _, tc := range tests {

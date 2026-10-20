@@ -17,6 +17,8 @@ var (
 	ErrBadPath           = errors.New("bad path")
 	ErrNotAFile          = errors.New("not a regular file")
 	ErrTooLarge          = errors.New("too large")
+	ErrBadArchive        = errors.New("bad archive")
+	ErrSandboxExhausted  = errors.New("sandbox exhausted")
 	ErrNotFound          = docker.ErrNotFound
 )
 
@@ -34,8 +36,9 @@ const (
 	containerPrefix   = "rp-sbx-"
 	volumePrefix      = "rp-ws-"
 	killAllCmd        = "rp-killall" // baked into the base image; see bench/images/base
+	readCmd           = "rp-read"    // ditto: no-follow, unprivileged file reader
 	killGraceSeconds  = "5"          // timeout -k: SIGKILL this long after SIGTERM
-	workspaceTmpfsOpt = "size=512m,uid=10001,gid=10001"
+	workspaceTmpfsOpt = "size=512m,uid=10001,gid=10001,nodev,nosuid"
 )
 
 // allowedCommands is defence in depth, not the boundary: the container is. It keeps the

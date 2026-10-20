@@ -4,10 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +34,15 @@ type fakeEngine struct {
 	archiveErr  error
 	put         []byte // last PutArchive body
 	putDir      string
+	putCalls    int
+	restarts    int
+}
+
+func (f *fakeEngine) RestartContainer(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restarts++
+	return nil
 }
 
 func newFakeEngine() *fakeEngine {
@@ -80,6 +91,7 @@ func (f *fakeEngine) ListContainers(context.Context, string) ([]docker.Container
 func (f *fakeEngine) PutArchive(_ context.Context, _, dir string, r io.Reader) error {
 	b, err := io.ReadAll(r)
 	f.put, f.putDir = b, dir
+	f.putCalls++
 	return err
 }
 
@@ -146,7 +158,7 @@ func TestCreateBuildsHardenedSandbox(t *testing.T) {
 	}
 	opts, ok := e.volumes["rp-ws-"+id]
 	if !ok || opts["type"] != "tmpfs" || opts["device"] != "tmpfs" ||
-		opts["o"] != "size=512m,uid=10001,gid=10001" {
+		opts["o"] != "size=512m,uid=10001,gid=10001,nodev,nosuid" {
 		t.Fatalf("volume opts = %v (found %v)", opts, ok)
 	}
 	spec, ok := e.containers["rp-sbx-"+id]
@@ -191,6 +203,9 @@ func TestExecWrapsWithTimeout(t *testing.T) {
 	want := []string{"timeout", "-k", "5", "120s", "pytest", "-q"}
 	if got := e.execs[0]; strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("argv = %v, want %v", got, want)
+	}
+	if len(e.execs) != 2 || e.execs[1][0] != killAllCmd {
+		t.Fatalf("escaped processes not cleaned after exec: %v", e.execs)
 	}
 	if _, err := m.Exec(context.Background(), "0123456789abcdef", ExecRequest{Argv: []string{"sh"}}); !errors.Is(err, ErrCommandNotAllowed) {
 		t.Fatalf("err = %v", err)
@@ -238,38 +253,39 @@ func TestExecBackstopKillsProcesses(t *testing.T) {
 	}
 }
 
+// readScript makes the fake engine answer rp-read with the given exit code and stdout.
+func readScript(e *fakeEngine, exit int, stdout string) {
+	e.execFn = func(_ context.Context, argv []string) (docker.ExecResult, error) {
+		if slices.Contains(argv, readCmd) {
+			return docker.ExecResult{ExitCode: exit, Stdout: stdout}, nil
+		}
+		return docker.ExecResult{}, nil
+	}
+}
+
 func TestReadFile(t *testing.T) {
 	e := newFakeEngine()
-	m := newTestManager(e)
-	e.archive = tarOf(t, &tar.Header{Name: "a.py", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644}, []byte("hi"))
-	got, err := m.ReadFile(context.Background(), "0123456789abcdef", "a.py")
-	if err != nil || string(got) != "hi" {
+	readScript(e, 0, base64.StdEncoding.EncodeToString([]byte("hi\x00bin")))
+	got, err := newTestManager(e).ReadFile(context.Background(), "0123456789abcdef", "./pkg//a.py")
+	if err != nil || string(got) != "hi\x00bin" {
 		t.Fatalf("got %q err %v", got, err)
 	}
-}
-
-func TestReadFileRejectsSymlink(t *testing.T) {
-	e := newFakeEngine()
-	e.archive = tarOf(t, &tar.Header{Name: "leak", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}, nil)
-	if _, err := newTestManager(e).ReadFile(context.Background(), "0123456789abcdef", "leak"); !errors.Is(err, ErrNotAFile) {
-		t.Fatalf("err = %v", err)
+	if argv := e.execs[0]; argv[len(argv)-2] != readCmd || argv[len(argv)-1] != "pkg/a.py" {
+		t.Fatalf("argv = %v", argv)
 	}
 }
 
-func TestReadFileTooLarge(t *testing.T) {
-	e := newFakeEngine()
-	big := bytes.Repeat([]byte("x"), MaxFileBytes+1)
-	e.archive = tarOf(t, &tar.Header{Name: "big", Typeflag: tar.TypeReg, Size: int64(len(big)), Mode: 0o644}, big)
-	if _, err := newTestManager(e).ReadFile(context.Background(), "0123456789abcdef", "big"); !errors.Is(err, ErrTooLarge) {
-		t.Fatalf("err = %v", err)
+func TestReadFileExitCodes(t *testing.T) {
+	for exit, want := range map[int]error{3: ErrNotAFile, 4: ErrNotFound, 5: ErrTooLarge} {
+		e := newFakeEngine()
+		readScript(e, exit, "")
+		if _, err := newTestManager(e).ReadFile(context.Background(), "0123456789abcdef", "x"); !errors.Is(err, want) {
+			t.Errorf("exit %d: err = %v, want %v", exit, err, want)
+		}
 	}
-}
-
-func TestReadFileMissing(t *testing.T) {
 	e := newFakeEngine()
-	e.archiveErr = &docker.APIError{Status: 404, Message: "no such file"}
-	if _, err := newTestManager(e).ReadFile(context.Background(), "0123456789abcdef", "nope.py"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v", err)
+	if _, err := newTestManager(e).ReadFile(context.Background(), "0123456789abcdef", "../x"); !errors.Is(err, ErrBadPath) || len(e.execs) != 0 {
+		t.Fatalf("err = %v execs = %v", err, e.execs)
 	}
 }
 
@@ -312,6 +328,39 @@ func TestWriteFileTar(t *testing.T) {
 	}
 }
 
+func TestUploadSanitizes(t *testing.T) {
+	e := newFakeEngine()
+	in := tarOf(t, &tar.Header{Name: "pkg/a.py", Typeflag: tar.TypeReg, Size: 1, Mode: 0o4755}, []byte("x"))
+	if err := newTestManager(e).Upload(context.Background(), "0123456789abcdef", bytes.NewReader(in)); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(bytes.NewReader(e.put))
+	var names []string
+	for h, err := tr.Next(); err == nil; h, err = tr.Next() {
+		names = append(names, h.Name)
+		if h.Mode&^0o777 != 0 || h.Uid != sandboxUID {
+			t.Fatalf("unsanitized entry %+v", h)
+		}
+	}
+	if strings.Join(names, ",") != "pkg/,pkg/a.py" {
+		t.Fatalf("entries = %v", names)
+	}
+}
+
+func TestUploadRejectsBadArchiveBeforeWriting(t *testing.T) {
+	e := newFakeEngine()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "/etc"})
+	_ = tw.WriteHeader(&tar.Header{Name: "evil/pwned", Typeflag: tar.TypeReg, Size: 1, Mode: 0o644})
+	_, _ = tw.Write([]byte("x"))
+	_ = tw.Close()
+	err := newTestManager(e).Upload(context.Background(), "0123456789abcdef", &buf)
+	if !errors.Is(err, ErrBadArchive) || e.putCalls != 0 {
+		t.Fatalf("err = %v putCalls = %d", err, e.putCalls)
+	}
+}
+
 func TestUploadTooLarge(t *testing.T) {
 	e := newFakeEngine()
 	m := newTestManager(e)
@@ -351,5 +400,38 @@ func TestReaperRemovesExpiredOnly(t *testing.T) {
 	if len(e.removedCtrs) != 1 || e.removedCtrs[0] != "rp-sbx-00000000000000aa" ||
 		len(e.removedVols) != 1 || e.removedVols[0] != "rp-ws-00000000000000aa" {
 		t.Fatalf("removed %v / %v", e.removedCtrs, e.removedVols)
+	}
+}
+
+func TestExecResetsWhenCleanupFails(t *testing.T) {
+	e := newFakeEngine()
+	e.archive = tarOf(t, &tar.Header{Name: "workspace/keep.py", Typeflag: tar.TypeReg, Size: 1, Mode: 0o644}, []byte("k"))
+	e.execFn = func(_ context.Context, argv []string) (docker.ExecResult, error) {
+		if argv[0] == killAllCmd {
+			return docker.ExecResult{}, errors.New("OCI runtime exec failed: resource temporarily unavailable")
+		}
+		return docker.ExecResult{ExitCode: 0, Stdout: "done"}, nil
+	}
+	res, err := newTestManager(e).Exec(context.Background(), "0123456789abcdef", ExecRequest{Argv: []string{"python"}})
+	if err != nil || res.Stdout != "done" {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if e.restarts != 1 || e.putDir != workspaceDir || !bytes.Contains(e.put, []byte("keep.py")) {
+		t.Fatalf("restarts = %d putDir = %q put has keep.py = %v", e.restarts, e.putDir, bytes.Contains(e.put, []byte("keep.py")))
+	}
+}
+
+func TestExecForkFailureIsExhausted(t *testing.T) {
+	e := newFakeEngine()
+	e.archive = tarOf(t, &tar.Header{Name: "workspace/", Typeflag: tar.TypeDir, Mode: 0o755}, nil)
+	e.execFn = func(_ context.Context, argv []string) (docker.ExecResult, error) {
+		if argv[0] == killAllCmd {
+			return docker.ExecResult{ExitCode: 0}, nil
+		}
+		return docker.ExecResult{ExitCode: 125, Stderr: "timeout: fork system call failed: Resource temporarily unavailable"}, nil
+	}
+	_, err := newTestManager(e).Exec(context.Background(), "0123456789abcdef", ExecRequest{Argv: []string{"python"}})
+	if !errors.Is(err, ErrSandboxExhausted) || e.execs[len(e.execs)-1][0] != killAllCmd {
+		t.Fatalf("err = %v execs = %v", err, e.execs)
 	}
 }

@@ -1,6 +1,8 @@
 """Live isolation tests against the compose sandbox-svc. Each test gets a fresh sandbox."""
 
+import io
 import os
+import tarfile
 import time
 from pathlib import Path
 
@@ -206,3 +208,117 @@ async def test_destroy_removes_volume(repo: Path):
         ["docker", "volume", "ls", "-q", "-f", f"name=rp-ws-{sid}"], env=env
     )
     assert done.stdout.decode().strip() == ""
+
+
+def _tar(*members: tuple[tarfile.TarInfo, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for info, data in members:
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data) if data else None)
+    return buf.getvalue()
+
+
+def _link(name: str, target: str) -> tuple[tarfile.TarInfo, bytes]:
+    info = tarfile.TarInfo(name)
+    info.type, info.linkname = tarfile.SYMTYPE, target
+    return info, b""
+
+
+def _file(name: str, data: bytes, mode: int = 0o644) -> tuple[tarfile.TarInfo, bytes]:
+    info = tarfile.TarInfo(name)
+    info.mode = mode
+    return info, data
+
+
+async def _exists(client, sid, path: str) -> bool:
+    res = await client.exec(sid, ["python", "-c", f"import os; print(os.path.lexists({path!r}))"])
+    return res.stdout.strip() == "True"
+
+
+async def test_upload_through_symlink_rejected(sandbox):
+    client, sid = sandbox
+    for archive in (
+        _tar(_link("evil", "/etc"), _file("evil/pwned", b"x")),
+        _tar(_link("b", "/usr/bin"), _file("b/timeout", b"#!/bin/sh\n", 0o755)),
+    ):
+        with pytest.raises(SandboxError) as exc:
+            await client.upload_tar(sid, archive)
+        assert exc.value.code == "bad_archive"
+    assert not await _exists(client, sid, "/etc/pwned")
+    res = await client.exec(sid, ["python", "-c", "import time; time.sleep(30)"], timeout_s=2)
+    assert res.timed_out  # coreutils timeout was not replaced
+
+
+async def test_upload_replaces_planted_symlink(sandbox):
+    """A symlink planted in the workspace before a later upload (e.g. held-out tests) is
+    replaced by a real directory, never followed."""
+    client, sid = sandbox
+    res = await client.exec(sid, ["python", "-c", "import os; os.symlink('/tmp', 'heldout')"])
+    assert res.exit_code == 0, res.stderr
+    await client.upload_tar(sid, _tar(_file("heldout/test_x.py", b"def test_x(): pass\n")))
+    assert not await _exists(client, sid, "/tmp/test_x.py")
+    assert await client.read_file(sid, "heldout/test_x.py") == b"def test_x(): pass\n"
+
+
+async def test_upload_strips_setuid_and_devices(sandbox):
+    client, sid = sandbox
+    dev = tarfile.TarInfo("mem")
+    dev.type, dev.devmajor, dev.devminor = tarfile.CHRTYPE, 1, 1
+    with pytest.raises(SandboxError) as exc:
+        await client.upload_tar(sid, _tar((dev, b"")))
+    assert exc.value.code == "bad_archive"
+    await client.upload_tar(sid, _tar(_file("suid", b"x", 0o4755)))
+    res = await client.exec(sid, ["python", "-c", "import os; print(oct(os.stat('suid').st_mode & 0o7777))"])
+    assert res.stdout.strip() == "0o755"
+
+
+async def test_workspace_mounted_nodev_nosuid(sandbox):
+    client, sid = sandbox
+    res = await client.exec(sid, ["cat", "/proc/mounts"])
+    line = next(ln for ln in res.stdout.splitlines() if " /workspace " in ln)
+    assert "nodev" in line and "nosuid" in line, line
+
+
+async def test_symlinked_dir_read_rejected(sandbox):
+    client, sid = sandbox
+    res = await client.exec(sid, ["python", "-c", "import os; os.symlink('/etc', 'e2')"])
+    assert res.exit_code == 0, res.stderr
+    for path in ("e2/passwd", "e2/shadow", "e2/hostname"):
+        with pytest.raises(SandboxError) as exc:
+            await client.read_file(sid, path)
+        assert exc.value.code == "not_a_file", path
+
+
+async def test_read_binary_file_roundtrip(sandbox):
+    client, sid = sandbox
+    data = bytes(range(256)) * 100
+    await client.write_file(sid, "blob.bin", data)
+    assert await client.read_file(sid, "blob.bin") == data
+
+
+async def test_escaped_fork_bomb_recovers(sandbox):
+    """A fork bomb that leaves timeout's process group must not brick the sandbox."""
+    client, sid = sandbox
+    bomb = (
+        "import os\n"
+        "if os.fork() == 0:\n"
+        "    os.setsid()\n"
+        "    while True:\n"
+        "        try:\n"
+        "            os.fork()\n"
+        "        except OSError:\n"
+        "            pass\n"
+    )
+    try:
+        await client.exec(sid, ["python", "-c", bomb], timeout_s=5)
+    except SandboxError as exc:
+        assert exc.code == "sandbox_exhausted"
+    for _ in range(2):  # the first call after a reset may still report exhaustion
+        try:
+            res = await client.exec(sid, ["python", "-c", "print('alive')"])
+            break
+        except SandboxError as exc:
+            assert exc.code == "sandbox_exhausted"
+    assert res.stdout.strip() == "alive"
+    assert b"return a + b" in await client.read_file(sid, "pkg/mod.py")

@@ -36,6 +36,8 @@ services:
     build: ./services/sandbox-svc
     user: "0:0"
     read_only: true
+    tmpfs:
+      - /tmp:size=1g  # staging for sanitised uploads and workspace snapshots during resets
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped

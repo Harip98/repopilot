@@ -26,8 +26,19 @@ What every sandbox container gets:
 | Images | only images whose names start with an allowed prefix (`repopilot-`) |
 | Lifetime | sandboxes older than 2 h are reaped, including orphans from a crashed service |
 
-Files cross the boundary through Docker's archive API, never through a shell. Reads refuse
-symlinks and anything that is not a regular file, and paths cannot leave `/workspace`.
+Files never cross the boundary through a shell:
+
+- **Uploads** are re-written by sandbox-svc before Docker sees them. Only regular files,
+  directories and symlinks are kept; names must stay inside `/workspace`; nothing may be
+  written beneath a symlink; setuid/setgid bits are cleared; parent directories are emitted
+  explicitly so a symlink planted earlier is replaced, not followed. A bad archive is rejected
+  before anything is written. The workspace is mounted `nodev,nosuid`.
+- **Reads** run as the sandbox user and open every path component with `O_NOFOLLOW`, so a
+  symlink anywhere in the path is refused and nothing is read with more privilege than the
+  agent has.
+- **After every command**, processes it left behind are killed. If none can even be started
+  (a fork bomb that escaped `timeout`), the sandbox is restarted and its workspace restored
+  from a daemon-side snapshot.
 
 What this is **not**:
 

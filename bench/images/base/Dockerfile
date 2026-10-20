@@ -13,7 +13,7 @@ RUN apt-get update \
     && git config --system user.email "repopilot@localhost" \
     && git config --system init.defaultBranch main
 
-COPY --chmod=755 rp-killall /usr/local/bin/rp-killall
+COPY --chmod=755 rp-killall rp-read /usr/local/bin/
 
 ENV HOME=/tmp PYTHONDONTWRITEBYTECODE=1
 USER 10001:10001

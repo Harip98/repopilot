@@ -105,8 +105,13 @@ class SandboxClient:
         return resp.json()["id"]
 
     async def upload_dir(self, sandbox_id: str, src: Path) -> None:
+        await self.upload_tar(sandbox_id, workspace_tar(src))
+
+    async def upload_tar(self, sandbox_id: str, data: bytes) -> None:
+        """Extract a tar archive into /workspace. sandbox-svc sanitises it and rejects entries
+        that could land outside the workspace (code `bad_archive`)."""
         await self._request(
-            "PUT", f"/v1/sandboxes/{sandbox_id}/archive", content=workspace_tar(src),
+            "PUT", f"/v1/sandboxes/{sandbox_id}/archive", content=data,
             headers={"Content-Type": "application/x-tar"}, timeout=300.0,
         )
 

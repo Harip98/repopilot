@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Print one workspace file base64-encoded, refusing a symlink anywhere in its path.
+
+sandbox-svc runs this as the sandbox user instead of reading through the Docker archive API,
+which resolves intermediate symlinks and reads as root. Each component is opened relative to
+its parent with O_NOFOLLOW, so there is no window to swap a directory for a link.
+
+Exit codes: 0 ok, 2 usage, 3 not a regular file (or a symlink), 4 not found, 5 too large.
+"""
+
+import base64
+import errno
+import os
+import stat
+import sys
+
+MAX_BYTES = 1 << 20
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or not sys.argv[1] or sys.argv[1].startswith("/"):
+        return 2
+    parts = sys.argv[1].split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        return 2
+    fd = os.open("/workspace", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for i, part in enumerate(parts):
+            last = i == len(parts) - 1
+            # O_NONBLOCK so a FIFO cannot block the open; it is then refused as non-regular.
+            flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_NONBLOCK if last else os.O_DIRECTORY)
+            try:
+                nfd = os.open(part, flags, dir_fd=fd)
+            except FileNotFoundError:
+                return 4
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EACCES):
+                    return 3
+                raise
+            os.close(fd)
+            fd = nfd
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return 3
+        chunks, size = [], 0
+        while size <= MAX_BYTES:
+            chunk = os.read(fd, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        if size > MAX_BYTES:
+            return 5
+        sys.stdout.write(base64.b64encode(b"".join(chunks)).decode())
+        return 0
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

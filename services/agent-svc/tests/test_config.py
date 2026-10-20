@@ -26,3 +26,12 @@ def test_dsn_contents(monkeypatch: pytest.MonkeyPatch):
     assert "port=5434" in dsn
     assert "dbname=repopilot" in dsn
     assert "user=repopilot" in dsn
+
+
+def test_secrets_hidden_from_repr():
+    s = Settings(_env_file=None, github_token="ghp_SECRET1", llm_api_key="sk-SECRET2",
+                 pg_password="pw-SECRET3")
+    text = repr(s) + str(s)
+    for secret in ("ghp_SECRET1", "sk-SECRET2", "pw-SECRET3"):
+        assert secret not in text
+    assert "password=pw-SECRET3" in s.dsn()

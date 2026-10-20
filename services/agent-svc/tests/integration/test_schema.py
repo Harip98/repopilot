@@ -64,3 +64,9 @@ def test_run_cascade(conn: psycopg.Connection):
         "SELECT (SELECT count(*) FROM run_events) + (SELECT count(*) FROM tool_calls)"
     ).fetchone()[0]
     assert remaining == 0
+
+
+def test_test_db_is_fresh(conn: psycopg.Connection, session_started_at):
+    """The test DB is rebuilt each session, so edits to unmerged migrations take effect."""
+    applied_at = conn.execute("SELECT min(applied_at) FROM schema_migrations").fetchone()[0]
+    assert applied_at >= session_started_at

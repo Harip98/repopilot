@@ -41,6 +41,10 @@ def discover(migrations_dir: Path) -> list[tuple[str, Path]]:
 
 def apply_migrations(conn: psycopg.Connection, migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
     """Apply pending migrations, each in its own transaction. `conn` must be autocommit."""
+    if not conn.autocommit:
+        # Inside an implicit transaction the per-file transactions become savepoints, and
+        # closing the connection without a commit would silently roll every migration back.
+        raise ValueError("apply_migrations needs an autocommit connection")
     conn.execute("SELECT pg_advisory_lock(%s)", (_LOCK_ID,))
     try:
         conn.execute(

@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from repopilot.db.migrate import MigrationChecksumError, _sha, check_checksums, discover
+from repopilot.db.migrate import (
+    MigrationChecksumError,
+    _sha,
+    apply_migrations,
+    check_checksums,
+    discover,
+)
 
 
 def test_discover_sorted_and_validated(tmp_path: Path):
@@ -27,3 +33,14 @@ def test_crlf_checksum_matches_lf(tmp_path: Path):
     lf.write_bytes(b"CREATE TABLE t (id int);\nSELECT 1;\n")
     crlf.write_bytes(b"CREATE TABLE t (id int);\r\nSELECT 1;\r\n")
     assert _sha(crlf) == _sha(lf)
+
+
+def test_apply_requires_autocommit(tmp_path: Path):
+    class TxnConn:  # stands in for a psycopg connection left in transaction mode
+        autocommit = False
+
+        def execute(self, *args, **kwargs):
+            raise AssertionError("must refuse before touching the database")
+
+    with pytest.raises(ValueError, match="autocommit"):
+        apply_migrations(TxnConn(), tmp_path)

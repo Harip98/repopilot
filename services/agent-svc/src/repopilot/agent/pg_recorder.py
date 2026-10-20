@@ -1,0 +1,88 @@
+"""Recorder backed by Postgres: the runs row, its ordered event log, and every tool call."""
+
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
+import anyio
+import psycopg
+from psycopg.types.json import Jsonb
+
+from repopilot.llm.types import ToolCall
+from repopilot.tools.registry import ToolOutcome
+
+TERMINAL = {"completed", "pr_opened", "rejected", "failed", "cancelled"}
+USAGE_COLUMNS = ("llm_calls", "tool_calls", "tool_failures", "unauthorized_attempts",
+                 "prompt_tokens", "completion_tokens", "cost_usd")
+
+
+class PgRecorder:
+    """One connection per recorder; a lock serialises its use, so a transaction from one task
+    never interleaves with statements from another task on the same connection."""
+
+    def __init__(self, conninfo: str):
+        self._conninfo = conninfo
+        self._conn: psycopg.AsyncConnection | None = None
+        self._lock = anyio.Lock()
+
+    @asynccontextmanager
+    async def _use(self) -> AsyncIterator[psycopg.AsyncConnection]:
+        async with self._lock:
+            if self._conn is None or self._conn.closed:
+                self._conn = await psycopg.AsyncConnection.connect(self._conninfo, autocommit=True)
+            yield self._conn
+
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._conn.close()
+
+    async def create_run(self, run_id: str, *, repo: str, issue_text: str, task_id: str | None,
+                         issue_ref: str | None, model: str, task_mode: str,
+                         sandbox_id: str | None = None) -> None:
+        async with self._use() as conn:
+            await conn.execute(
+                "INSERT INTO runs (id, repo, issue_text, task_id, issue_ref, model, task_mode,"
+                " sandbox_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued')",
+                (run_id, repo, issue_text, task_id, issue_ref, model, task_mode, sandbox_id),
+            )
+
+    async def status(self, run_id: str, status: str, **fields: Any) -> None:
+        sets, params = ["status = %s"], [status]
+        for key in ("failure_reason", "pr_url", "retries", "trace_id", "error"):
+            if key in fields:
+                sets.append(f"{key} = %s")
+                params.append(fields[key])
+        usage = fields.get("usage") or {}
+        for key in USAGE_COLUMNS:
+            if key in usage:
+                sets.append(f"{key} = %s")
+                params.append(usage[key])
+        if status in TERMINAL:
+            sets.append("finished_at = now()")
+        async with self._use() as conn:
+            await conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = %s", [*params, run_id])
+
+    async def event(self, run_id: str, node: str, kind: str, payload: dict) -> None:
+        async with self._use() as conn, conn.transaction():
+            # Lock the run row so writers on other connections cannot take the same seq.
+            await conn.execute("SELECT 1 FROM runs WHERE id = %s FOR UPDATE", (run_id,))
+            await conn.execute(
+                "INSERT INTO run_events (run_id, seq, node, kind, payload)"
+                " SELECT %s, COALESCE(MAX(seq), 0) + 1, %s, %s, %s FROM run_events"
+                " WHERE run_id = %s",
+                (run_id, node, kind, Jsonb(payload), run_id),
+            )
+
+    async def tool_call(self, run_id: str, step: int, call: ToolCall, outcome: ToolOutcome) -> None:
+        try:
+            args = json.loads(call.arguments or "{}")
+        except json.JSONDecodeError:
+            args = {"raw": call.arguments}
+        async with self._use() as conn:
+            await conn.execute(
+                "INSERT INTO tool_calls (run_id, step, tool, args, ok, denied, result_excerpt,"
+                " error, latency_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (run_id, step, call.name, Jsonb(args), outcome.ok, outcome.denied,
+                 outcome.content[:2000], outcome.error, outcome.latency_ms),
+            )

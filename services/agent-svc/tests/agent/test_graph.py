@@ -18,11 +18,6 @@ PLAN = {"root_cause": "case-sensitive compare", "files": ["app/store.py"],
         "acceptance_criteria": ["PAID matches paid"], "test_targets": ["tests"]}
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 def explore_and_edit() -> list:
     return [
         tool_reply("read_file", path="app/store.py"),

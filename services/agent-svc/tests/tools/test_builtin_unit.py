@@ -10,11 +10,6 @@ from repopilot.tools.registry import ToolContext
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 class FakeSandbox:
     """In-memory files; exec returns a scripted result and records argv."""
 

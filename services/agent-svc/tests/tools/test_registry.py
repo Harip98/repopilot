@@ -18,11 +18,6 @@ from repopilot.tools.registry import (
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 def test_policy_denies():
     policy = ToolPolicy(protected_paths=["tests/heldout_*"])
     for path in (".git/config", ".github/workflows/ci.yml", "tests/heldout_pagination.py",

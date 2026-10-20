@@ -17,11 +17,6 @@ from repopilot.llm import (
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 READ_FILE = ToolSpec(
     name="read_file", description="Read a file.",
     parameters={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},

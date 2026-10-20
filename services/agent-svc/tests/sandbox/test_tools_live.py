@@ -16,11 +16,6 @@ TEST = "from pkg.mod import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\
 
 
 @pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture
 async def tools(tmp_path):
     (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["."]\n', newline="\n")
     (tmp_path / "pkg").mkdir()

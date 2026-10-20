@@ -12,11 +12,6 @@ from repopilot.sandbox_client import ExecResult, SandboxClient, SandboxError, wo
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 def _client(handler) -> SandboxClient:
     return SandboxClient("http://sandbox", "tok-0123456789abcdef", transport=httpx.MockTransport(handler))
 

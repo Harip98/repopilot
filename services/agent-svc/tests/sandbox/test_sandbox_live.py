@@ -19,11 +19,6 @@ IMAGE = "repopilot-sandbox-base"
 
 
 @pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture
 def repo(tmp_path: Path) -> Path:
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "__init__.py").write_text("")

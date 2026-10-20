@@ -12,7 +12,6 @@ repo: demo
 title: add() subtracts
 issue: |
   Calling add(2, 3) returns -1.
-commit_message: Simplify arithmetic helpers
 difficulty: simple
 split: dev
 test_command: [pytest, -q]
@@ -73,8 +72,25 @@ def test_load_tasks_validates(bench: Path, breakage, needle):
 def test_build_base_workspace_history(bench: Path, tmp_path: Path):
     [task] = load_tasks(root=bench / "tasks", repos_root=bench / "repos")
     ws = build_base_workspace(task, tmp_path / "ws", repos_root=bench / "repos")
-    assert _git(ws, "log", "--format=%s").splitlines() == ["Simplify arithmetic helpers", "initial"]
+    # One import commit with the bug already in it: the fix is nowhere in .git.
+    assert _git(ws, "log", "--format=%s").splitlines() == ["Import demo"]
+    assert "return a + b" not in _git(ws, "log", "-p", "--all")
     assert _git(ws, "status", "--porcelain") == ""
+    for key, want in (("core.symlinks", "true"), ("core.filemode", "true"),
+                      ("core.ignorecase", "false")):
+        assert _git(ws, "config", "--local", key).strip() == want
     assert (ws / "calc.py").read_bytes() == b"def add(a, b):\n    return a - b\n"
     assert not (ws / "__pycache__").exists()
     assert not list(ws.rglob("test_heldout_*"))
+
+
+def test_real_tasks_protect_test_infrastructure():
+    from repopilot.tools.policy import ToolPolicy
+
+    for task in load_tasks():
+        policy = ToolPolicy(protected_paths=task.protected_paths)
+        for path in ("tests/conftest.py", "conftest.py", "pyproject.toml", "pytest.ini",
+                     "tests/test_heldout_x.py"):
+            assert policy.check_write(path), (task.id, path)
+        assert policy.check_write(task.expected_files[0]) is None, task.id
+        assert (task.heldout_dir / "tests" / "conftest.py").is_file(), task.id

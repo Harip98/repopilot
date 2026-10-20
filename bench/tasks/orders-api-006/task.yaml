@@ -6,10 +6,9 @@ issue: |
   building. `POST /orders/{id}/cancel` on a shipped order returns 200. Per the README only
   orders that have not shipped can be cancelled; shipped and delivered orders should get a
   409 and stay unchanged.
-commit_message: "Let support cancel orders in more states"
 difficulty: simple
 split: dev
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_cancel_rules.py]
-protected_paths: ["tests/test_heldout_*"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/store.py]

@@ -7,10 +7,9 @@ issue: |
   1 and 2 and the last 17 orders are never reachable from the pager.
 
   Expected `pages` to be 3 here. Probably started after last week's pagination cleanup.
-commit_message: "Simplify page count calculation"
 difficulty: simple
 split: dev
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_pagination_pages.py]
-protected_paths: ["tests/test_heldout_*"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/pagination.py]

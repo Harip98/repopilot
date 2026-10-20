@@ -1,11 +1,15 @@
 from decimal import Decimal
 
 from app.models import LineItem
-from app.pricing import apply_discount, order_total
+from app.pricing import order_total
 
 
-def test_discount_is_a_percentage():
-    assert apply_discount(Decimal("200"), Decimal("10")) == Decimal("180")
+def test_api_applies_percentage_discount(client):
+    order = client.post("/orders", json={
+        "customer": "c", "discount_pct": "10",
+        "items": [{"sku": "A", "quantity": 2, "unit_price": "100.00"}],
+    }).json()
+    assert order["total"] == "194.85"
 
 
 def test_totals_with_discount():

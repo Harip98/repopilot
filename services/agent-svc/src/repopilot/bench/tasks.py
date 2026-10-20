@@ -21,7 +21,6 @@ class Task(BaseModel):
     repo: str
     title: str
     issue: str
-    commit_message: str
     difficulty: Literal["simple", "complex"]
     split: Literal["dev", "test"]
     test_command: list[str] = Field(min_length=1)

@@ -10,10 +10,9 @@ issue: |
 
   A page past the end should come back as `200` with an empty `items` list and the real
   `total` / `pages`, so the UI can show "no results" or jump back.
-commit_message: "Validate requested page number"
 difficulty: complex
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_out_of_range.py]
-protected_paths: ["tests/test_heldout_*"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/pagination.py]

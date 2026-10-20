@@ -15,13 +15,15 @@ ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().pare
 REPO = ROOT / "bench" / "repos" / "orders-api"
 TASKS = ROOT / "bench" / "tasks"
 GIT = ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf"]
+# Held-out test names plus the test infrastructure that decides how pytest runs them.
+PROTECTED = ('["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", '
+             '"pytest.ini", "setup.cfg", "tox.ini"]')
 
 T = {}
 
 T["001"] = dict(
     title="Order list never shows the last partial page",
     difficulty="simple", split="dev", heldout="pagination_pages",
-    commit_message="Simplify page count calculation",
     expected_files=["app/pagination.py"],
     edits=[("app/pagination.py", "    return (total + page_size - 1) // page_size\n",
             "    return total // page_size\n")],
@@ -33,29 +35,22 @@ T["001"] = dict(
         Expected `pages` to be 3 here. Probably started after last week's pagination cleanup.
         """,
     test="""\
-        from app.pagination import page_count, paginate
-
-
-        def test_partial_last_page_is_counted():
-            assert page_count(57, 20) == 3
-            assert page_count(60, 20) == 3
-            assert page_count(1, 20) == 1
-
-
-        def test_last_page_items():
-            page = paginate(list(range(57)), 3, 20)
-            assert page.pages == 3 and page.items == list(range(40, 57))
-
-
-        def test_api_reports_three_pages(client):
+        def test_partial_last_page_is_counted(client):
             assert client.get("/orders", params={"page_size": 20}).json()["pages"] == 3
+            assert client.get("/orders", params={"page_size": 19}).json()["pages"] == 3
+            assert client.get("/orders", params={"page_size": 100}).json()["pages"] == 1
+
+
+        def test_last_page_is_reachable(client):
+            body = client.get("/orders", params={"page": 3, "page_size": 20}).json()
+            assert len(body["items"]) == 17
+            assert [o["id"] for o in body["items"]] == list(range(41, 58))
         """,
 )
 
 T["002"] = dict(
     title="page_size above 100 is not capped",
     difficulty="simple", split="dev", heldout="page_size_cap",
-    commit_message="Let API clients choose their page size",
     expected_files=["app/pagination.py"],
     edits=[("app/pagination.py", "    return min(page_size, MAX_PAGE_SIZE)\n",
             "    return page_size\n")],
@@ -67,25 +62,27 @@ T["002"] = dict(
         Requests above the maximum should be served with `page_size` 100.
         """,
     test="""\
-        from app.pagination import MAX_PAGE_SIZE, paginate
+        from fastapi.testclient import TestClient
+
+        from app.main import create_app
+        from app.store import seeded_store
 
 
         def test_page_size_is_capped():
-            page = paginate(list(range(250)), 1, 5000)
-            assert page.page_size == MAX_PAGE_SIZE == 100
-            assert len(page.items) == 100 and page.pages == 3
-
-
-        def test_api_caps_page_size(client):
+            client = TestClient(create_app(seeded_store(250)))
             body = client.get("/orders", params={"page_size": 5000}).json()
             assert body["page_size"] == 100
+            assert len(body["items"]) == 100 and body["pages"] == 3 and body["total"] == 250
+
+
+        def test_small_page_sizes_unchanged(client):
+            assert client.get("/orders", params={"page_size": 7}).json()["page_size"] == 7
         """,
 )
 
 T["003"] = dict(
     title="sort=-created_at returns oldest orders first",
     difficulty="simple", split="dev", heldout="sort_direction",
-    commit_message="Parse sort direction prefix",
     expected_files=["app/store.py"],
     edits=[("app/store.py", '        descending = sort.startswith("-")\n',
             '        descending = sort.endswith("-")\n')],
@@ -118,7 +115,6 @@ T["003"] = dict(
 T["004"] = dict(
     title="Percentage discounts are taken off as dollars",
     difficulty="simple", split="dev", heldout="discount",
-    commit_message="Inline discount arithmetic",
     expected_files=["app/pricing.py"],
     edits=[("app/pricing.py",
             '    return amount * (Decimal("100") - discount_pct) / Decimal("100")\n',
@@ -134,11 +130,15 @@ T["004"] = dict(
         from decimal import Decimal
 
         from app.models import LineItem
-        from app.pricing import apply_discount, order_total
+        from app.pricing import order_total
 
 
-        def test_discount_is_a_percentage():
-            assert apply_discount(Decimal("200"), Decimal("10")) == Decimal("180")
+        def test_api_applies_percentage_discount(client):
+            order = client.post("/orders", json={
+                "customer": "c", "discount_pct": "10",
+                "items": [{"sku": "A", "quantity": 2, "unit_price": "100.00"}],
+            }).json()
+            assert order["total"] == "194.85"
 
 
         def test_totals_with_discount():
@@ -152,7 +152,6 @@ T["004"] = dict(
 T["005"] = dict(
     title="Status filter only matches lowercase values",
     difficulty="simple", split="dev", heldout="status_case",
-    commit_message="Tidy up status filter",
     expected_files=["app/store.py"],
     edits=[("app/store.py", "            wanted = status.lower()\n", "            wanted = status\n")],
     issue="""\
@@ -176,7 +175,6 @@ T["005"] = dict(
 T["006"] = dict(
     title="Shipped orders can be cancelled",
     difficulty="simple", split="dev", heldout="cancel_rules",
-    commit_message="Let support cancel orders in more states",
     expected_files=["app/store.py"],
     edits=[("app/store.py", "CANCELLABLE = {OrderStatus.PENDING, OrderStatus.PAID}\n",
             "CANCELLABLE = {OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED}\n")],
@@ -211,7 +209,6 @@ T["006"] = dict(
 T["007"] = dict(
     title="Some order totals are one cent low",
     difficulty="complex", split="dev", heldout="money_rounding",
-    commit_message="Use float multiplication for tax (perf)",
     expected_files=["app/pricing.py"],
     edits=[("app/pricing.py", '    return amount * (Decimal("1") + TAX_RATE)\n',
             "    return Decimal(float(amount) * (1 + float(TAX_RATE)))\n")],
@@ -252,7 +249,6 @@ T["007"] = dict(
 T["008"] = dict(
     title="Requesting a page past the end returns 500",
     difficulty="complex", split="test", heldout="out_of_range",
-    commit_message="Validate requested page number",
     expected_files=["app/pagination.py"],
     edits=[("app/pagination.py", "    start = (page - 1) * size\n",
             "    pages = page_count(len(items), size)\n"
@@ -288,7 +284,6 @@ T["008"] = dict(
 T["009"] = dict(
     title="Order subtotal includes cancelled line items",
     difficulty="complex", split="test", heldout="cancelled_lines",
-    commit_message="Compute stored subtotal inline",
     expected_files=["app/store.py"],
     edits=[("app/store.py", "            subtotal=round_money(subtotal(data.items)),\n",
             "            subtotal=round_money(sum((i.unit_price * i.quantity for i in data.items), Decimal(\"0\"))),\n")],
@@ -320,7 +315,6 @@ T["009"] = dict(
 T["010"] = dict(
     title="Retried POST /orders with the same Idempotency-Key creates a duplicate",
     difficulty="complex", split="test", heldout="idempotency",
-    commit_message="Refactor order creation",
     expected_files=["app/store.py"],
     edits=[("app/store.py",
             "            if idempotency_key is not None:\n"
@@ -390,18 +384,20 @@ for num, spec in T.items():
     (d / "fix.patch").write_bytes(fix.encode())
     heldout_name = f"tests/test_heldout_{spec['heldout']}.py"
     (d / "heldout" / heldout_name).write_bytes(textwrap.dedent(spec["test"]).encode())
+    # Scoring overwrites the test fixtures with pristine copies, so a conftest hook the agent
+    # adds cannot force held-out tests to pass.
+    shutil.copyfile(REPO / "tests" / "conftest.py", d / "heldout" / "tests" / "conftest.py")
     expected = ", ".join(spec["expected_files"])
     yaml = (
         f"id: {task_id}\n"
         f"repo: orders-api\n"
         f"title: \"{spec['title']}\"\n"
         f"issue: |\n{yaml_block(spec['issue'])}\n"
-        f"commit_message: \"{spec['commit_message']}\"\n"
         f"difficulty: {spec['difficulty']}\n"
         f"split: {spec['split']}\n"
         f"test_command: [pytest, -q]\n"
         f"heldout_command: [pytest, -q, {heldout_name}]\n"
-        f"protected_paths: [\"tests/test_heldout_*\"]\n"
+        f"protected_paths: {PROTECTED}\n"
         f"expected_files: [{expected}]\n"
     )
     (d / "task.yaml").write_bytes(yaml.encode())

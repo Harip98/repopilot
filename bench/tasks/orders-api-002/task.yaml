@@ -7,10 +7,9 @@ issue: |
   now pulling the whole table every minute.
 
   Requests above the maximum should be served with `page_size` 100.
-commit_message: "Let API clients choose their page size"
 difficulty: simple
 split: dev
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_page_size_cap.py]
-protected_paths: ["tests/test_heldout_*"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/pagination.py]

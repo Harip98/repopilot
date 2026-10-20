@@ -1,12 +1,15 @@
-from app.pagination import MAX_PAGE_SIZE, paginate
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from app.store import seeded_store
 
 
 def test_page_size_is_capped():
-    page = paginate(list(range(250)), 1, 5000)
-    assert page.page_size == MAX_PAGE_SIZE == 100
-    assert len(page.items) == 100 and page.pages == 3
-
-
-def test_api_caps_page_size(client):
+    client = TestClient(create_app(seeded_store(250)))
     body = client.get("/orders", params={"page_size": 5000}).json()
     assert body["page_size"] == 100
+    assert len(body["items"]) == 100 and body["pages"] == 3 and body["total"] == 250
+
+
+def test_small_page_sizes_unchanged(client):
+    assert client.get("/orders", params={"page_size": 7}).json()["page_size"] == 7

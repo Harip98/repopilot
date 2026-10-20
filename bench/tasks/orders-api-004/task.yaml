@@ -7,10 +7,9 @@ issue: |
   $5.00 order the same coupon makes the total negative.
 
   `discount_pct` is a percentage (0-100), applied before tax.
-commit_message: "Inline discount arithmetic"
 difficulty: simple
 split: dev
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_discount.py]
-protected_paths: ["tests/test_heldout_*"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/pricing.py]

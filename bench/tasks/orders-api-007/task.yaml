@@ -9,10 +9,9 @@ issue: |
   - one item at $18.00: invoicing says $19.49, the API says $19.48
 
   Most orders match. Totals should be exact and rounded half-up to the cent.
-commit_message: "Use float multiplication for tax (perf)"
 difficulty: complex
 split: dev
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_money_rounding.py]
-protected_paths: ["tests/test_heldout_*"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/pricing.py]

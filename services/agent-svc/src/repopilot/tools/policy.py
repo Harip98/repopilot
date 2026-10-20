@@ -29,9 +29,12 @@ class ToolPolicy:
         clean = clean_rel_path(path)
         if clean is None:
             return f"{path!r} is not a path inside the workspace"
-        top = clean.split("/", 1)[0]
-        if top in ALWAYS_PROTECTED:
-            return f"{top}/ is protected"
+        parts = clean.split("/")
+        if parts[0] in ALWAYS_PROTECTED:
+            return f"{parts[0]}/ is protected"
+        # A .git anywhere would turn a directory into a nested repo and hide it from the diff.
+        if any(p.lower() == ".git" for p in parts):
+            return "paths inside a .git directory are protected"
         for pattern in self.protected_paths:
             if fnmatch(clean, pattern):
                 return f"{clean} is protected for this task"

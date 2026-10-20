@@ -5,6 +5,7 @@ failures all come back as a ToolOutcome the model can read and react to.
 """
 
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -18,10 +19,17 @@ from repopilot.tools.policy import ToolPolicy
 
 ToolKind = Literal["read", "write", "exec"]
 MAX_CONTENT = 8000
+MAX_ERROR = 2000
+log = logging.getLogger(__name__)
 
 
 class ToolError(Exception):
     """A failure the model should see verbatim (e.g. "old text occurs 2 times")."""
+
+
+class PolicyDenied(ToolError):
+    """Raised by a tool that discovers a forbidden target only while running (e.g. the paths
+    git says a patch would touch). Recorded as a denial, like a failed pre-check."""
 
 
 class ToolOutcome(BaseModel):
@@ -122,8 +130,14 @@ class ToolRegistry:
             return done(ok=False, denied=True, error=f"policy: {reason}")
         try:
             content = await tool.fn(ctx, args)
+        except PolicyDenied as exc:
+            return done(ok=False, denied=True, error=f"policy: {exc}")
         except SandboxError as exc:
-            return done(ok=False, error=f"{exc.code}: {exc.message}")
+            return done(ok=False, error=truncate(f"{exc.code}: {exc.message}", MAX_ERROR))
         except ToolError as exc:
-            return done(ok=False, error=str(exc))
+            return done(ok=False, error=truncate(str(exc), MAX_ERROR))
+        except Exception as exc:
+            log.exception("tool %s failed", name)
+            return done(ok=False, error=truncate(
+                f"internal error: {type(exc).__name__}: {exc}", MAX_ERROR))
         return done(ok=True, content=truncate(content))

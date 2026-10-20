@@ -6,7 +6,14 @@ from pydantic import BaseModel, Field
 from repopilot.sandbox_client import SandboxError
 from repopilot.tools.patch import patch_targets
 from repopilot.tools.policy import ToolPolicy
-from repopilot.tools.registry import Tool, ToolContext, ToolError, ToolRegistry, truncate
+from repopilot.tools.registry import (
+    PolicyDenied,
+    Tool,
+    ToolContext,
+    ToolError,
+    ToolRegistry,
+    truncate,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -120,3 +127,24 @@ def test_specs_and_subset():
     assert set(spec.parameters["properties"]) == {"path", "count"}
     assert "title" not in json.dumps(spec.parameters)
     assert [s.name for s in reg.subset({"read"}).specs()] == ["echo"]
+
+
+async def test_dispatch_never_raises():
+    out = await _registry([], fail=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")).dispatch(
+        _ctx(), "echo", '{"path": "x"}')
+    assert not out.ok and out.error.startswith("internal error: UnicodeDecodeError")
+    out = await _registry([], fail=RuntimeError("x" * 20000)).dispatch(_ctx(), "echo", '{"path": "x"}')
+    assert not out.ok and len(out.error) < 2100
+
+
+async def test_dispatch_policy_denied_from_tool():
+    out = await _registry([], fail=PolicyDenied(".github/ is protected")).dispatch(
+        _ctx(), "echo", '{"path": "x"}')
+    assert not out.ok and out.denied and out.error == "policy: .github/ is protected"
+
+
+def test_policy_denies_nested_git_dirs():
+    policy = ToolPolicy()
+    for path in ("vendor/.git/config", "app/.GIT/HEAD", ".Git/x", "a/b/.git"):
+        assert policy.check_write(path) is not None, path
+    assert policy.check_write("app/.gitkeep") is None

@@ -5,9 +5,8 @@ import re
 from pydantic import BaseModel, Field
 
 from repopilot.sandbox_client import ExecResult, SandboxError
-from repopilot.tools.patch import patch_targets
 from repopilot.tools.policy import ToolPolicy, clean_rel_path
-from repopilot.tools.registry import Tool, ToolContext, ToolError, ToolRegistry
+from repopilot.tools.registry import PolicyDenied, Tool, ToolContext, ToolError, ToolRegistry
 
 MAX_READ_LINES = 400
 MAX_SEARCH_MATCHES = 50
@@ -145,7 +144,10 @@ class ReplaceTextArgs(BaseModel):
 
 async def replace_text(ctx: ToolContext, a: ReplaceTextArgs) -> str:
     path = _rel(a.path)
-    text = (await ctx.sandbox.read_file(ctx.sandbox_id, path)).decode("utf-8")
+    try:
+        text = (await ctx.sandbox.read_file(ctx.sandbox_id, path)).decode("utf-8")
+    except UnicodeDecodeError:
+        raise ToolError(f"{path} is not UTF-8 text; use apply_patch to change it") from None
     count = text.count(a.old)
     if count == 0:
         raise ToolError(f"old text not found in {path}; read the file again and copy it exactly")
@@ -179,9 +181,44 @@ class ApplyPatchArgs(BaseModel):
     patch: str = Field(min_length=1, description="A unified diff (as produced by `git diff`).")
 
 
+def parse_numstat_z(out: str) -> list[str]:
+    """Paths from `git apply --numstat -z`: "add\\tdel\\tpath\\0", or for a rename or copy
+    "add\\tdel\\t\\0old\\0new\\0"."""
+    fields, paths, i = out.split("\x00"), [], 0
+    while i < len(fields):
+        if not fields[i]:
+            i += 1
+            continue
+        parts = fields[i].split("\t", 2)
+        if len(parts) == 3 and parts[2]:
+            paths.append(parts[2])
+            i += 1
+        else:
+            paths += [p for p in fields[i + 1:i + 3] if p]
+            i += 3
+    return paths
+
+
+_SYMLINK_MODE = re.compile(r"^(?:new file mode|new mode|old mode|deleted file mode) 120000\s*$", re.MULTILINE)
+
+
 async def apply_patch(ctx: ToolContext, a: ApplyPatchArgs) -> str:
     patch = a.patch if a.patch.endswith("\n") else a.patch + "\n"
     await ctx.sandbox.write_file(ctx.sandbox_id, PATCH_FILE, patch.encode())
+    # Ask git which paths it would touch: its parser (quoting, -p1 prefixes, header-only and
+    # binary patches, renames) is the one that writes files, so it is the one policy checks.
+    stat = await ctx.sandbox.exec(
+        ctx.sandbox_id, ["git", "apply", "--numstat", "-z", "--recount", PATCH_FILE])
+    if stat.exit_code != 0:
+        raise ToolError("patch does not apply: " + (stat.stderr.strip() or stat.stdout.strip()))
+    targets = sorted(set(parse_numstat_z(stat.stdout)))
+    if not targets:
+        raise ToolError("patch contains no file changes; send a unified diff")
+    for path in targets:
+        if reason := ctx.policy.check_write(path):
+            raise PolicyDenied(reason)
+    if _SYMLINK_MODE.search(patch):
+        raise PolicyDenied("patches may not create or change symlinks")
     # --recount: models often get hunk line counts wrong; the content is what must match.
     check = await ctx.sandbox.exec(
         ctx.sandbox_id, ["git", "apply", "--check", "--recount", "--whitespace=nowarn", PATCH_FILE])
@@ -191,7 +228,7 @@ async def apply_patch(ctx: ToolContext, a: ApplyPatchArgs) -> str:
         ctx.sandbox_id, ["git", "apply", "--recount", "--whitespace=nowarn", PATCH_FILE])
     if res.exit_code != 0:
         raise ToolError("patch failed: " + res.stderr.strip())
-    return "applied patch to: " + ", ".join(patch_targets(patch))
+    return "applied patch to: " + ", ".join(targets)
 
 
 # --- exec tools ---------------------------------------------------------------------------

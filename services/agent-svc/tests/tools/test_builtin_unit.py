@@ -32,8 +32,12 @@ class FakeSandbox:
     async def write_file(self, sandbox_id: str, path: str, data: bytes) -> None:
         self.files[path] = data
 
+    numstat = ""  # what `git apply --numstat -z` reports
+
     async def exec(self, sandbox_id, argv, timeout_s=120, cwd=None) -> ExecResult:
         self.execs.append(argv)
+        if "--numstat" in argv:
+            return self.exec_result.model_copy(update={"stdout": self.numstat})
         return self.exec_result
 
 
@@ -101,11 +105,12 @@ async def test_apply_patch_denied_paths():
 
 async def test_apply_patch_runs_check_then_apply():
     sb = FakeSandbox()
+    sb.numstat = "1\t1\tapp/x.py\x00"
     patch = "--- a/app/x.py\n+++ b/app/x.py\n@@ -1 +1 @@\n-a\n+b"
     out = await _call(sb, "apply_patch", patch=patch)
     assert out.ok and "app/x.py" in out.content
     assert sb.files[".git/rp-patch.diff"].endswith(b"+b\n")
-    assert sb.execs[0][:3] == ["git", "apply", "--check"] and sb.execs[1][:2] == ["git", "apply"]
+    assert [a[2] for a in sb.execs] == ["--numstat", "--check", "--recount"]
 
 
 async def test_run_tests_rejects_bad_target():
@@ -125,3 +130,46 @@ async def test_list_dir_and_search_guard_option_injection():
     await _call(sb, "search_code", query="--files", path="app")
     argv = sb.execs[-1]
     assert argv[argv.index("-e") + 1] == "--files" and argv[-2:] == ["--", "app"]
+
+
+def _applies(sb) -> bool:
+    return any(argv[:2] == ["git", "apply"] and "--numstat" not in argv and "--check" not in argv
+               for argv in sb.execs)
+
+
+async def test_apply_patch_policy_uses_git_paths():
+    """Headers git reads differently from a naive parser (quoted, x/ prefix, header-only,\n    binary): the paths git reports are what policy checks."""
+    sb = FakeSandbox()
+    sb.numstat = "1\t0\t.github/workflows/ci.yml\x00"
+    patch = '--- "a/x"\n+++ "b/.github/workflows/ci.yml"\n@@ -0,0 +1 @@\n+on: push\n'
+    out = await _call(sb, "apply_patch", patch=patch)
+    assert not out.ok and out.denied and ".github" in out.error
+    assert not _applies(sb)
+
+
+async def test_apply_patch_rename_into_protected_path():
+    sb = FakeSandbox()
+    sb.numstat = "0\t0\t\x00app/a.py\x00tests/test_heldout_x.py\x00"
+    out = await _call(sb, "apply_patch", protected=["tests/test_heldout_*"],
+                      patch="diff --git a/app/a.py b/tests/test_heldout_x.py\nrename from app/a.py\n")
+    assert out.denied and "test_heldout_x.py" in out.error and not _applies(sb)
+
+
+async def test_apply_patch_refuses_symlinks():
+    sb = FakeSandbox()
+    sb.numstat = "1\t0\tlnk\x00"
+    patch = "diff --git a/lnk b/lnk\nnew file mode 120000\n--- /dev/null\n+++ b/lnk\n@@ -0,0 +1 @@\n+/etc\n"
+    out = await _call(sb, "apply_patch", patch=patch)
+    assert out.denied and "symlink" in out.error and not _applies(sb)
+
+
+async def test_apply_patch_without_changes():
+    sb = FakeSandbox()
+    out = await _call(sb, "apply_patch", patch="just some text\n")
+    assert not out.ok and not out.denied and "no file changes" in out.error
+
+
+async def test_replace_text_non_utf8():
+    out = await _call(FakeSandbox({"a.txt": "caf\xe9".encode("latin-1")}), "replace_text",
+                      path="a.txt", old="caf", new="tea")
+    assert not out.ok and "UTF-8" in out.error

@@ -33,7 +33,8 @@ async def tools(tmp_path):
     await client.upload_dir(sid, tmp_path)
     for argv in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-qm", "initial"]):
         assert (await client.exec(sid, argv)).exit_code == 0
-    ctx = ToolContext(sandbox=client, sandbox_id=sid, policy=ToolPolicy(),
+    ctx = ToolContext(sandbox=client, sandbox_id=sid,
+                      policy=ToolPolicy(protected_paths=["tests/test_heldout_*"]),
                       test_command=["pytest", "-q"])
     registry = build_registry()
 
@@ -122,3 +123,38 @@ async def test_git_log(tools):
     assert out.ok and "initial" in out.content and "pkg/mod.py" in out.content
     out = await tools("git_log", path="pkg/mod.py", n=1)
     assert out.ok and out.content.count("initial") == 1
+
+
+EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+BYPASS_PATCHES = {
+    "quoted names": (
+        'diff --git "a/.github/workflows/ci.yml" "b/.github/workflows/ci.yml"\n'
+        "new file mode 100644\n--- /dev/null\n"
+        '+++ "b/.github/workflows/ci.yml"\n@@ -0,0 +1 @@\n+on: push\n'
+    ),
+    "non a/b prefix": (
+        "--- /dev/null\n+++ x/tests/test_heldout_pwn.py\n@@ -0,0 +1 @@\n+x = 1\n"
+    ),
+    "header-only new file": (
+        "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n"
+        f"new file mode 100644\nindex 0000000..{EMPTY_BLOB[:7]}\n"
+    ),
+    "binary patch": (
+        "diff --git a/.github/evil b/.github/evil\nnew file mode 100644\n"
+        f"index 0000000000000000000000000000000000000000..{EMPTY_BLOB}\n"
+        "GIT binary patch\nliteral 0\nHcmV?d00001\n\nliteral 0\nHcmV?d00001\n\n"
+    ),
+    "quoted rename": (
+        'diff --git a/pkg/mod.py "b/.github/README.md"\nsimilarity index 100%\n'
+        'rename from pkg/mod.py\nrename to ".github/README.md"\n'
+    ),
+}
+
+
+@pytest.mark.parametrize("patch", BYPASS_PATCHES.values(), ids=BYPASS_PATCHES.keys())
+async def test_apply_patch_bypasses_denied(tools, patch):
+    out = await tools("apply_patch", patch=patch)
+    assert not out.ok and out.denied, out
+    diff = (await tools("git_diff")).content
+    assert diff == "(no changes)", diff
+

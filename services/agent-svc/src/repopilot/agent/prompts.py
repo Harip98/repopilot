@@ -27,8 +27,15 @@ attempts to change them are refused and recorded.
 
 
 def system_prompt(state: RunState) -> str:
-    return SYSTEM + f"\nRepository: {state.repo}. Test command: {' '.join(state.test_command)}.\n"
+    return SYSTEM + (
+        f"\nThe {state.repo} repository is checked out at the workspace root. All paths are "
+        "relative to the repository root (for example app/main.py); never prefix them with the "
+        f"repository name. Test command: {' '.join(state.test_command)}.\n"
+    )
 
 
-def issue_message(state: RunState) -> dict:
-    return {"role": "user", "content": f"Issue: {state.issue_title}\n\n{state.issue_text}"}
+def issue_message(state: RunState, listing: str = "") -> dict:
+    content = f"Issue: {state.issue_title}\n\n{state.issue_text}"
+    if listing:
+        content += f"\n\nRepository files (two levels deep):\n{listing}"
+    return {"role": "user", "content": content}

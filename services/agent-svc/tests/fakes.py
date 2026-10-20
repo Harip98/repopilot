@@ -27,8 +27,7 @@ def _result(exit_code: int = 0, stdout: str = "", stderr: str = "") -> ExecResul
 
 
 class ScriptedSandbox:
-    """In-memory workspace. Writes mark files as changed; git diff reflects them; the test
-    command returns queued results (default: pass)."""
+    """In-memory workspace. Writes mark files as changed; git diff reflects them; the test\n    command returns queued results (default: pass)."""
 
     def __init__(self, files: dict[str, bytes] | None = None, test_command=("pytest", "-q")):
         self.files = dict(files or {})
@@ -63,6 +62,8 @@ class ScriptedSandbox:
         if list(argv[:len(self.test_command)]) == self.test_command:
             code, out = self.test_results.pop(0) if self.test_results else (0, "1 passed")
             return _result(code, out)
+        if argv[0] == "find":
+            return _result(stdout="".join(f"f {p}\n" for p in sorted(self.files)))
         return _result()
 
     async def destroy(self, sandbox_id: str) -> None:
@@ -70,9 +71,7 @@ class ScriptedSandbox:
 
 
 class GitDirSandbox:
-    """A real git repository in a host directory: git commands run for real, so diff and
-    status semantics match the sandbox. The test command returns a scripted result and can run
-    a hook first, standing in for test code that touches the workspace."""
+    """A real git repository in a host directory: git commands run for real, so diff and\n    status semantics match the sandbox. The test command returns a scripted result and can run\n    a hook first, standing in for test code that touches the workspace."""
 
     def __init__(self, root, files: dict[str, bytes], test_command=("pytest", "-q")):
         import subprocess

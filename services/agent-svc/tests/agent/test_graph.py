@@ -324,3 +324,11 @@ async def test_sandbox_error_in_validate_fails_run():
     h.sandbox.exec = exec_until_validate
     final = RunState.model_validate(await h.start(explore_and_edit(), auto_approve=True))
     assert final.status == "failed" and final.failure_reason == "sandbox_error: not_found"
+
+
+async def test_intake_includes_listing():
+    h = Harness()
+    out = await h.start([text_reply("x")] * 3)
+    issue = out["messages"][1]["content"]
+    assert "Repository files" in issue and "app/store.py" in issue
+    assert h.recorder.tool_calls == []  # the listing is context, not an agent tool call

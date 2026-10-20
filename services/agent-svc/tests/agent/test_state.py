@@ -51,3 +51,9 @@ def test_state_roundtrips_json():
                                            acceptance_criteria=["a"], test_targets=["tests"]),
                    messages=[{"role": "user", "content": "hi"}])
     assert RunState.model_validate_json(state.model_dump_json()) == state
+
+
+def test_system_prompt_paths_relative():
+    prompt = system_prompt(_state())
+    assert "relative to the repository root" in prompt
+    assert "Repository: orders-api" not in prompt  # read as a directory by small models

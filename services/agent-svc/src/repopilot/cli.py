@@ -1,5 +1,7 @@
 """`repopilot` command line."""
 
+from typing import Annotated
+
 import typer
 
 from repopilot import __version__
@@ -248,3 +250,143 @@ def runs(limit: int = typer.Option(20, help="How many recent runs to show.")) ->
     for r in rows:
         typer.echo(f"{r[0]}  {r[1]:<16} {r[2]:<18} {r[3]:<22} {r[4]:<24} "
                    f"llm={r[5]} tools={r[6]} tokens={r[7]}  {r[8]:%Y-%m-%d %H:%M}")
+
+
+@bench_app.command("freeze")
+def bench_freeze(note: str = typer.Option(..., help="Why the split is being (re)frozen.")) -> None:
+    """Freeze the test split: record a hash per test task and its fixture repo."""
+    from datetime import UTC, datetime
+
+    from repopilot.bench.freeze import FREEZE_FILE, write_freeze
+    from repopilot.bench.tasks import load_tasks
+
+    tasks = load_tasks(split="test")
+    write_freeze(tasks)
+    log = FREEZE_FILE.parent / "FREEZE_LOG.md"
+    if not log.exists():
+        log.write_text("# Test split freezes\n\n| Date (UTC) | Tasks | Note |\n|---|---|---|\n",
+                       encoding="utf-8")
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write(f"| {datetime.now(UTC):%Y-%m-%d %H:%M} | {len(tasks)} | {note} |\n")
+    typer.echo(f"froze {len(tasks)} test tasks into {FREEZE_FILE.name}")
+
+
+eval_app = typer.Typer(no_args_is_help=True, help="Run and report evaluations.")
+app.add_typer(eval_app, name="eval")
+
+
+def _eval_tasks(split: str):
+    from repopilot.bench.tasks import load_tasks
+
+    if split not in ("dev", "test", "all"):
+        raise typer.BadParameter("split must be dev, test or all")
+    return load_tasks(split=None if split == "all" else split)
+
+
+@eval_app.command("run")
+def eval_run(
+    name: str = typer.Option(..., help="Eval name; rerunning the same name resumes it."),
+    split: str = typer.Option("dev", help="dev, test or all"),
+    model: str | None = typer.Option(None, help="Override REPOPILOT_LLM_MODEL."),
+    task_id: Annotated[list[str] | None, typer.Option("--task", help="Only these task ids.")] = None,
+    allow_unfrozen: bool = typer.Option(False, help="Run the test split even if it changed."),
+) -> None:
+    """Run the agent with auto-approval over a split and write eval/reports/<name>.*"""
+    from repopilot.agent.pg_recorder import PgRecorder
+    from repopilot.agent.runner import postgres_checkpointer, run_async, run_bench_task
+    from repopilot.agent.state import Budget
+    from repopilot.bench.freeze import check_frozen
+    from repopilot.config import get_settings
+    from repopilot.eval.runner import PgResultStore, eval_meta, run_eval, write_report
+    from repopilot.sandbox_client import get_sandbox_client
+
+    tasks = [t for t in _eval_tasks(split) if not task_id or t.id in task_id]
+    if split in ("test", "all") and not allow_unfrozen:
+        problems = check_frozen([t for t in tasks if t.split == "test"]) if not task_id else []
+        if problems:
+            typer.echo("the test split differs from its freeze:\n  " + "\n  ".join(problems), err=True)
+            raise typer.Exit(1)
+    settings = get_settings()
+    budget = Budget()
+
+    async def run() -> None:
+        dsn = settings.dsn()
+        recorder = PgRecorder(dsn)
+        store = PgResultStore(dsn)
+        try:
+            async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
+                model_name = _deps(sandbox, recorder, model).llm.model
+
+                async def run_task(task, run_id):
+                    deps = _deps(sandbox, recorder, model)
+                    return await run_bench_task(task, deps, saver, run_id=run_id,
+                                                auto_approve=True, budget=budget)
+
+                def progress(r) -> None:
+                    typer.echo(f"{r.task_id:<16} {'RESOLVED' if r.resolved else 'unresolved':<11}"
+                               f"{r.status:<10} {r.failure_reason or r.error or ''}"[:160])
+
+                meta = eval_meta(name, model_name, settings.llm_base_url, tasks,
+                                 budget.model_dump(include={"max_llm_calls", "max_tool_calls",
+                                                            "max_seconds", "max_retries"}))
+                results = await run_eval(name, tasks, run_task, store, model=model_name,
+                                         on_result=progress)
+            path = write_report(name, results, meta)
+            typer.echo(f"report: {path}")
+        finally:
+            await recorder.close()
+
+    run_async(run)
+
+
+@eval_app.command("report")
+def eval_report(name: str) -> None:
+    """Re-render eval/reports/<name>.* from the stored results."""
+    import json
+
+    from repopilot.agent.runner import run_async
+    from repopilot.config import get_settings
+    from repopilot.eval.runner import REPORTS_DIR, PgResultStore, write_report
+
+    results = run_async(PgResultStore(get_settings().dsn()).load, name)
+    if not results:
+        typer.echo(f"no results for {name}", err=True)
+        raise typer.Exit(1)
+    meta_path = REPORTS_DIR / f"{name}.meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    typer.echo(f"report: {write_report(name, results, meta)}")
+
+
+@eval_app.command("compare")
+def eval_compare(names: list[str]) -> None:
+    """Side-by-side summary of two or more evals."""
+    from repopilot.agent.runner import run_async
+    from repopilot.config import get_settings
+    from repopilot.eval.runner import PgResultStore
+    from repopilot.eval.score import summarize
+
+    store = PgResultStore(get_settings().dsn())
+    summaries = [summarize(run_async(store.load, n)) for n in names]
+
+    def pct(v):
+        return "n/a" if v is None else f"{v * 100:.1f}%"
+
+    def num(v, fmt="{:,.0f}"):
+        return "n/a" if v is None else fmt.format(v)
+
+    rows = [
+        ("Tasks", [str(s.n) for s in summaries]),
+        ("Resolved", [f"{s.resolved} ({pct(s.resolution_rate)})" for s in summaries]),
+        ("95% CI", [f"{pct(s.resolution_ci[0])}–{pct(s.resolution_ci[1])}" for s in summaries]),
+        ("Patch applied", [pct(s.patch_applied_rate) for s in summaries]),
+        ("Tool failure rate", [pct(s.tool_failure_rate) for s in summaries]),
+        ("Avg retries", [num(s.avg_retries, "{:.2f}") for s in summaries]),
+        ("p50 / p95 s", [f"{num(s.p50_latency_s)} / {num(s.p95_latency_s)}" for s in summaries]),
+        ("Tokens / resolved", [num(s.tokens_per_resolved) for s in summaries]),
+        ("Unauthorized", [str(s.unauthorized_attempts) for s in summaries]),
+        ("Harness errors", [str(s.errors) for s in summaries]),
+    ]
+    typer.echo("| Metric | " + " | ".join(names) + " |")
+    typer.echo("|---|" + "---|" * len(names))
+    for label, values in rows:
+        typer.echo(f"| {label} | " + " | ".join(values) + " |")

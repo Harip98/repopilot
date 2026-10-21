@@ -71,8 +71,9 @@ async def handle_job(job: dict, svc: WorkerServices) -> None:
     if job["type"] == "start":
         if run["status"] in TERMINAL or run["status"] == "awaiting_approval":
             return  # already done or waiting for a human: nothing to do
-        result = await _start(run_id, run | {"auto_approve": job.get("auto_approve", False)},
-                              svc, deps)
+        result = await _start(
+            run_id, run | {"run_id": run_id, "auto_approve": job.get("auto_approve", False)},
+            svc, deps)
     elif job["type"] == "resume":
         result = await resume_run(run_id, job["decision"], deps, svc.checkpointer)
     else:

@@ -50,6 +50,43 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # The API and worker (`docker compose --profile app up -d`). For local development they also
+  # run on the host: `repopilot serve` and `repopilot worker`.
+  api:
+    profiles: ["app"]
+    build: {context: ., dockerfile: services/agent-svc/Dockerfile}
+    image: repopilot-agent-svc
+    environment: &agent-env
+      REPOPILOT_PG_HOST: postgres
+      REPOPILOT_PG_PORT: "5432"
+      REPOPILOT_PG_PASSWORD: ${REPOPILOT_PG_PASSWORD:-repopilot_dev_pw}
+      REPOPILOT_REDIS_URL: redis://redis:6379/0
+      REPOPILOT_SANDBOX_URL: http://sandbox-svc:8090
+      REPOPILOT_SANDBOX_TOKEN: ${REPOPILOT_SANDBOX_TOKEN:-dev-sandbox-token-change-me}
+      REPOPILOT_API_TOKEN: ${REPOPILOT_API_TOKEN:-dev-api-token-change-me}
+      REPOPILOT_UI_ORIGIN: ${REPOPILOT_UI_ORIGIN:-http://127.0.0.1:3000}
+      REPOPILOT_LLM_BASE_URL: ${REPOPILOT_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      REPOPILOT_LLM_MODEL: ${REPOPILOT_LLM_MODEL:-qwen2.5-7b-16k}
+      REPOPILOT_LLM_API_KEY: ${REPOPILOT_LLM_API_KEY:-}
+      REPOPILOT_GITHUB_TOKEN: ${REPOPILOT_GITHUB_TOKEN:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    profiles: ["app"]
+    image: repopilot-agent-svc
+    command: ["repopilot", "worker", "--name", "compose-worker-1"]
+    environment: *agent-env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      sandbox-svc: {condition: service_started}
+
 volumes:
   pgdata:
   redisdata:

@@ -88,7 +88,7 @@ async def test_create_validates_body(api):
 
 
 async def test_create_github_run(api):
-    client, queue, conn = api
+    client, _queue, conn = api
     resp = await client.post("/v1/runs", json={"repo": "acme/shop", "issue_number": 42},
                              headers=AUTH)
     run_id = resp.json()["run_id"]

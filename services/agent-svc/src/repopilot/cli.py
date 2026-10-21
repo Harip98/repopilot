@@ -391,3 +391,98 @@ def eval_compare(names: list[str]) -> None:
     typer.echo("|---|" + "---|" * len(names))
     for label, values in rows:
         typer.echo(f"| {label} | " + " | ".join(values) + " |")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind address."),
+    port: int = typer.Option(8000, help="Port."),
+) -> None:
+    """Run the HTTP API (runs, SSE timeline, approvals, evals)."""
+    import uvicorn
+
+    from repopilot.agent.pg_recorder import PgRecorder
+    from repopilot.agent.runner import run_async
+    from repopilot.api import ApiServices, create_app
+    from repopilot.api.repo import RunsRepo
+    from repopilot.bench.tasks import load_tasks
+    from repopilot.config import get_settings
+    from repopilot.eval.runner import PgResultStore
+    from repopilot.queue import JobQueue
+
+    s = get_settings()
+    tasks = {t.id: t for t in load_tasks()}
+    app_ = create_app(ApiServices(
+        repo=RunsRepo(s.dsn()), claims=PgRecorder(s.dsn()), queue=JobQueue(s.redis_url),
+        results=PgResultStore(s.dsn()), load_task=tasks.get,
+        token=s.api_token.get_secret_value(), ui_origin=s.ui_origin, default_model=s.llm_model))
+    # Served on our own event loop: psycopg's async mode needs a selector loop on Windows.
+    server = uvicorn.Server(uvicorn.Config(app_, host=host, port=port, log_level="info"))
+    run_async(server.serve)
+
+
+@app.command()
+def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis group.")) -> None:
+    """Execute queued runs: start, continue after a crash, and resume after approval."""
+    import logging
+
+    import anyio
+
+    from repopilot.agent.deps import RunDeps
+    from repopilot.agent.pg_recorder import PgRecorder
+    from repopilot.agent.pr import NoPR
+    from repopilot.agent.runner import postgres_checkpointer, run_async
+    from repopilot.bench.tasks import load_tasks
+    from repopilot.config import get_settings
+    from repopilot.github import GitHubClient, GitHubPR, prepare_github_run
+    from repopilot.llm import get_chat_model
+    from repopilot.queue import JobQueue
+    from repopilot.sandbox_client import get_sandbox_client
+    from repopilot.tools.builtin import build_registry
+    from repopilot.worker import Worker, WorkerServices, handle_job
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    s = get_settings()
+    tasks = {t.id: t for t in load_tasks()}
+    token = s.github_token.get_secret_value()
+
+    async def run() -> None:
+        recorder = PgRecorder(s.dsn())
+        queue = JobQueue(s.redis_url)
+        github = GitHubClient(token, s.github_api_url) if token else None
+        try:
+            async with get_sandbox_client() as sandbox, postgres_checkpointer(s.dsn()) as saver:
+                def deps_for(model: str | None) -> RunDeps:
+                    return RunDeps(
+                        llm=get_chat_model(model), sandbox=sandbox, registry=build_registry(),
+                        recorder=recorder, pr=GitHubPR(github, sandbox) if github else NoPR(),
+                        price_in=s.llm_price_in, price_out=s.llm_price_out)
+
+                async def prepare_github(run: dict, deps: RunDeps):
+                    if github is None:
+                        raise RuntimeError("REPOPILOT_GITHUB_TOKEN is not set")
+                    return await prepare_github_run(run, run_id=run["run_id"], github=github,
+                                                    sandbox=sandbox,
+                                                    auto_approve=run.get("auto_approve", False))
+
+                services = WorkerServices(deps_for=deps_for, checkpointer=saver,
+                                          recorder=recorder, load_task=tasks.get,
+                                          prepare_github=prepare_github)
+
+                async def handle(job: dict) -> None:
+                    await handle_job(job, services)
+
+                async def exhausted(job: dict) -> None:
+                    await recorder.status(job["run_id"], "failed",
+                                          failure_reason="job_retries_exhausted")
+
+                typer.echo(f"worker {name} consuming {queue.stream}")
+                await Worker(queue, handle, name, visibility_ms=s.job_visibility_s * 1000,
+                             on_exhausted=exhausted).run_forever(anyio.Event())
+        finally:
+            await recorder.close()
+            await queue.close()
+            if github:
+                await github.aclose()
+
+    run_async(run)

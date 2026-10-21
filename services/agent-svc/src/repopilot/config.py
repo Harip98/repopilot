@@ -1,5 +1,6 @@
 """Runtime settings, read from REPOPILOT_* environment variables and the repo-root .env."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -17,7 +18,18 @@ def find_repo_root(start: Path | None = None) -> Path:
     raise RuntimeError(f"no docker-compose.yml above {here}")
 
 
-REPO_ROOT = find_repo_root()
+def resolve_repo_root() -> Path:
+    """REPOPILOT_ROOT if set (containers), else the checkout holding this package, else the
+    working directory: importing settings must never fail outside a source checkout."""
+    if explicit := os.environ.get("REPOPILOT_ROOT"):
+        return Path(explicit).resolve()
+    try:
+        return find_repo_root()
+    except RuntimeError:
+        return Path.cwd().resolve()
+
+
+REPO_ROOT = resolve_repo_root()
 
 
 class Settings(BaseSettings):

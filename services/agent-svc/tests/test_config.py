@@ -36,3 +36,14 @@ def test_secrets_hidden_from_repr():
         assert secret not in text
     assert "password=pw-SECRET3" in s.dsn()
     assert s.sandbox_token.get_secret_value() == "sbx-SECRET4-0123456789"
+
+
+def test_repo_root_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from repopilot import config
+
+    monkeypatch.setenv("REPOPILOT_ROOT", str(tmp_path))
+    assert config.resolve_repo_root() == tmp_path.resolve()
+    monkeypatch.delenv("REPOPILOT_ROOT")
+    monkeypatch.setattr(config, "find_repo_root", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.chdir(tmp_path)
+    assert config.resolve_repo_root() == tmp_path.resolve()

@@ -21,16 +21,16 @@ def pr_body(state: RunState) -> str:
             lines += ["### Acceptance criteria"] + [f"- {c}" for c in state.plan.acceptance_criteria]
             lines.append("")
     if tests is not None:
-        lines += ["### Validation", f"`{' '.join(state.test_command)}` exited with "
-                  f"{tests.exit_code} in an isolated sandbox."]
+        lines += ["### Validation", (f"`{' '.join(state.test_command)}` exited with "
+                  f"{tests.exit_code} in an isolated sandbox.")]
         if state.baseline_tests_passed:
             lines.append("Note: the suite also passed before this change, so review the diff "
                          "against the issue rather than relying on green tests alone.")
         lines.append("")
     approver = state.approval.by if state.approval else "a reviewer"
     lines += [f"Fixes #{gh.issue_number}", "",
-              f"---\nOpened as a draft by RepoPilot after approval by {approver} "
-              f"(run `{state.run_id}`)."]
+              (f"---\nOpened as a draft by RepoPilot after approval by {approver} "
+              f"(run `{state.run_id}`).")]
     return "\n".join(lines)
 
 

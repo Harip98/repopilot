@@ -43,7 +43,7 @@ survives a crashed worker and resumes mid-investigation.
 ```
 intake ─► llm ⇄ tools                     explore phase: read-only tools + submit_plan
            │ └► nudge ─► llm               (replies without a tool call; 3 in a row fails the run)
-           │    tools ─finish─► validate ─pass─► approval ─approve─► open_pr ─► record ─► end
+           │    tools ─finish─► validate ─pass─► request_review ─► approval ─approve─► open_pr ─► record
            │                       │                 └─reject + comment (once)─► llm
            │                       └─fail─► diagnose ─► llm   (at most max_retries)
            └─budget exceeded─► fail ─► record
@@ -60,8 +60,10 @@ intake ─► llm ⇄ tools                     explore phase: read-only tools +
    `.gitignore`), rejects the run if any protected path changed, runs the test command, and
    re-checks the workspace after the tests, because test code can touch files too.
 5. **diagnose** hands the failing output back to the model, at most `max_retries` times.
-6. **approval** pauses with `interrupt()`. The review payload (diff, test output, plan, summary,
-   and whether the suite already passed before the change) is stored on the run row. A
+6. **request_review** stores the review payload (diff, test output, plan, summary, and whether
+   the suite already passed before the change) on the run row, and **approval** pauses with
+   `interrupt()`. They are separate nodes because LangGraph re-runs the interrupted node on
+   resume: a status write inside it would reopen the review while the PR is being opened. A
    rejection with a comment gets one revision.
 7. **open_pr** builds a draft PR for GitHub runs; benchmark runs have nowhere to push.
 8. **record** writes the final status, usage and result.
@@ -128,8 +130,13 @@ Migrations are numbered SQL files applied by a checksum-checked, advisory-locked
 `POST /v1/runs` writes a `queued` row and enqueues a `start` job. Workers consume the Redis
 Stream with a consumer group; a job that is not acknowledged within the visibility timeout is
 reclaimed by another worker. Jobs are idempotent: a `start` job for a finished run does nothing,
-and a redelivered one continues from the run's last checkpoint. A job delivered more than three
-times marks the run failed.
+and a redelivered one continues from the run's last checkpoint; a `resume` job for a run that
+has finished, or is no longer at the approval step, does nothing. While a job runs, the worker
+renews its lease (`XCLAIM … JUSTID`) so a long run is not reclaimed by another worker. Errors
+that cannot succeed on a retry (unknown task, unsafe archive, GitHub 404) fail the run at once
+with the error recorded; other errors are redelivered, and a job delivered more than three times
+fails its run unless the run has finished meanwhile. A run whose sandbox was reaped while it
+waited for review fails as `sandbox_expired`.
 
 `POST /v1/runs/{id}/approval` claims the run atomically
 (`UPDATE … WHERE status = 'awaiting_approval' RETURNING`), so two concurrent decisions cannot

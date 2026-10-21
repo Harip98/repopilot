@@ -43,6 +43,7 @@ export interface Run {
 
 export interface RunDetail extends Run {
   issue_text: string;
+  trace_id: string | null;
   task_mode: "bench" | "github";
   error: string | null;
   approval_request: ReviewPayload | null;

@@ -96,8 +96,12 @@ denials, to [`eval/reports/`](eval/reports/).
   (`REPOPILOT_LLM_BASE_URL`, `REPOPILOT_LLM_MODEL`); the harness is the same.
 - Every task's *visible* tests pass on the buggy code, so the agent has to reproduce the bug
   from the issue. A green suite is weak evidence, and the UI and PR body say so.
-- The fixtures are small, and fixes touch one or two files.
+- The fixtures are small, and every reference fix is one hunk in one file (*complex* means
+  it changes 3 or more lines).
 - Ollama reports prompt tokens without its cached prefix, so local token counts are low.
+- GitHub runs get no network inside the sandbox, so a repository's dependencies must be baked
+  into a `repopilot-sandbox-*` image named in its `.repopilot.yml`; nothing is installed at
+  run time.
 
 ## Stack
 
@@ -173,7 +177,7 @@ a bearer token.
 | Time | Every command runs under `timeout` (default 120 s, max 600 s), with a stream-deadline backstop |
 | Leftovers | Processes a command leaves behind are killed; if none can start, the sandbox restarts and the workspace is restored |
 | Output | stdout and stderr capped at 64 KiB each |
-| Images | Only images named `repopilot-*` |
+| Images | Only `repopilot-sandbox-*` and `repopilot-bench-*` images |
 | Lifetime | Sandboxes older than 2 h are reaped, including orphans from a crashed service |
 
 Files never cross the boundary through a shell:

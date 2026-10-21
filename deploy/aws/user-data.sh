@@ -21,6 +21,7 @@ git clone "$REPO_URL" /opt/repopilot
 cd /opt/repopilot
 
 param() { aws ssm get-parameter --with-decryption --name "/repopilot/$1" --query Parameter.Value --output text; }
+optional_param() { param "$1" 2>/dev/null || true; }
 cat > .env <<EOF
 REPOPILOT_PG_PASSWORD=$(param REPOPILOT_PG_PASSWORD)
 REPOPILOT_SANDBOX_TOKEN=$(param REPOPILOT_SANDBOX_TOKEN)
@@ -30,8 +31,20 @@ REPOPILOT_GITHUB_TOKEN=$(param REPOPILOT_GITHUB_TOKEN)
 REPOPILOT_LLM_BASE_URL=$LLM_BASE_URL
 REPOPILOT_LLM_MODEL=$LLM_MODEL
 REPOPILOT_UI_ORIGIN=https://$DOMAIN
+REPOPILOT_OTEL_ENDPOINT=$(optional_param REPOPILOT_OTEL_ENDPOINT)
+REPOPILOT_LANGFUSE_PUBLIC_KEY=$(optional_param REPOPILOT_LANGFUSE_PUBLIC_KEY)
+REPOPILOT_LANGFUSE_SECRET_KEY=$(optional_param REPOPILOT_LANGFUSE_SECRET_KEY)
 EOF
 chmod 600 .env
+
+# The console needs only the API token and where it is served: not the GitHub token, the LLM
+# key or the database password.
+cat > web.env <<EOF
+REPOPILOT_API_TOKEN=$(param REPOPILOT_API_TOKEN)
+REPOPILOT_API_URL=http://127.0.0.1:8000
+REPOPILOT_UI_HOSTS=$DOMAIN
+EOF
+chmod 600 web.env && chown ec2-user web.env
 
 # Sandbox images, then the stack.
 docker build -t repopilot-sandbox-base bench/images/base
@@ -50,8 +63,7 @@ Description=RepoPilot review console
 After=network.target
 [Service]
 WorkingDirectory=/opt/repopilot/web
-EnvironmentFile=/opt/repopilot/.env
-Environment=REPOPILOT_API_URL=http://127.0.0.1:8000
+EnvironmentFile=/opt/repopilot/web.env
 ExecStart=/usr/bin/npm start
 Restart=always
 User=ec2-user

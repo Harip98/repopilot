@@ -185,6 +185,7 @@ intervals. The test split is frozen by per-task hashes; tuning happens on the de
   from the issue. The UI and the PR body say so whenever a green suite is weak evidence.
 - GitHub runs have no network inside the sandbox, so dependencies must be baked into a
   `repopilot-*` image named in `.repopilot.yml`.
-- Metrics are counted per checkpointed step: if a worker dies in the middle of a step, that
-  step's tool calls may be counted twice.
+- Checkpoints are taken between steps. If a worker dies in the middle of a tools step, the
+  replacement re-runs that whole step: its tool calls run again (an `apply_patch` that already
+  applied then fails, and the model sees that) and are counted twice.
 - Ollama reports prompt tokens without the cached prefix, so local token totals are low.

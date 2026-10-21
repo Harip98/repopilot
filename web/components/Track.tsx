@@ -92,9 +92,9 @@ export function Track({ stops, live }: { stops: Stop[]; live: boolean }) {
               {stop.detail ? <div className="detail">{stop.detail}</div> : null}
               {stop.calls && stop.calls.length > 0 ? (
                 <div className="calls">
-                  {stop.calls.map((c) => (
+                  {stop.calls.map((c, i) => (
                     <span
-                      key={`${c.step}-${c.tool}`}
+                      key={`${c.step}-${c.tool}-${i}`}
                       className={`call ${c.denied ? "denied" : c.ok ? "" : "failed"}`}
                       title={c.error ?? JSON.stringify(c.args)}
                     >

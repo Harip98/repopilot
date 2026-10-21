@@ -8,13 +8,18 @@ interface FileDiff {
 export function parseDiff(diff: string): FileDiff[] {
   const files: FileDiff[] = [];
   let current: FileDiff | null = null;
+  let inHunk = false; // inside a hunk every line is content, even "--- x" or "+++ y"
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff --git ")) {
       const match = / b\/(.+)$/.exec(line);
       current = { path: match ? match[1] : line.slice(11), tag: null, lines: [] };
       files.push(current);
+      inHunk = false;
     } else if (!current) {
       continue;
+    } else if (inHunk || line.startsWith("@@")) {
+      inHunk = true;
+      current.lines.push(line);
     } else if (line.startsWith("new file mode")) {
       current.tag = "new file";
     } else if (line.startsWith("deleted file mode")) {

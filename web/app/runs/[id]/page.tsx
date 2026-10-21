@@ -8,12 +8,16 @@ import { Status } from "@/components/Status";
 import { Track, buildStops } from "@/components/Track";
 import { api, ApiError, TERMINAL, type RunDetail, type RunEvent, type ToolCallRow } from "@/lib/api";
 
+// e.g. http://127.0.0.1:16686/trace/{trace_id} for the compose Jaeger, or a Langfuse trace URL.
+const TRACE_URL = process.env.NEXT_PUBLIC_TRACE_URL ?? "";
+
 export default function RunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [run, setRun] = useState<RunDetail | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [calls, setCalls] = useState<ToolCallRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [streamLost, setStreamLost] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -48,6 +52,12 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
         "completed", "pr_opened", "rejected", "failed"].map((k) => `${n}.${k}`));
     names.forEach((name) => source.addEventListener(name, onEvent as EventListener));
     source.onmessage = onEvent;
+    source.onopen = () => setStreamLost(false);
+    // EventSource retries on its own after a dropped connection, but gives up for good on an
+    // HTTP error (a 502 from the proxy, say): say so instead of freezing the timeline.
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) setStreamLost(true);
+    };
     source.addEventListener("end", () => {
       source.close();
       refresh();
@@ -78,7 +88,15 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
             <span className="error-note">{run.unauthorized_attempts} blocked edit{run.unauthorized_attempts > 1 ? "s" : ""} of protected files</span>
           ) : null}
           {run.pr_url ? <a href={run.pr_url}>View draft pull request</a> : null}
+          {run.trace_id && TRACE_URL ? (
+            <a href={TRACE_URL.replace("{trace_id}", run.trace_id)}>Open trace</a>
+          ) : null}
         </div>
+        {streamLost ? (
+          <p className="error-note" role="alert">
+            Live updates stopped (the API is not reachable). <button type="button" onClick={() => location.reload()}>Reload</button>
+          </p>
+        ) : null}
       </header>
 
       <div className="run-grid">

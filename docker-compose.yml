@@ -74,6 +74,12 @@ services:
       REPOPILOT_LLM_MODEL: ${REPOPILOT_LLM_MODEL:-qwen2.5-7b-16k}
       REPOPILOT_LLM_API_KEY: ${REPOPILOT_LLM_API_KEY:-}
       REPOPILOT_GITHUB_TOKEN: ${REPOPILOT_GITHUB_TOKEN:-}
+      # Tracing (off unless an endpoint is set): the otel profile's Jaeger is
+      # http://jaeger:4318; Langfuse takes its OTLP endpoint plus the two keys.
+      REPOPILOT_OTEL_ENDPOINT: ${REPOPILOT_OTEL_ENDPOINT:-}
+      REPOPILOT_OTEL_CAPTURE_CONTENT: ${REPOPILOT_OTEL_CAPTURE_CONTENT:-false}
+      REPOPILOT_LANGFUSE_PUBLIC_KEY: ${REPOPILOT_LANGFUSE_PUBLIC_KEY:-}
+      REPOPILOT_LANGFUSE_SECRET_KEY: ${REPOPILOT_LANGFUSE_SECRET_KEY:-}
     ports:
       - "127.0.0.1:8000:8000"
     extra_hosts: ["host.docker.internal:host-gateway"]

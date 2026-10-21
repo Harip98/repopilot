@@ -36,6 +36,8 @@ untrusted repositories from the public internet: for that, swap the container ru
 /repopilot/REPOPILOT_API_TOKEN          (32+ random characters)
 /repopilot/REPOPILOT_LLM_API_KEY
 /repopilot/REPOPILOT_GITHUB_TOKEN       (fine-grained: issues read; contents + pull requests write)
+/repopilot/REPOPILOT_OTEL_ENDPOINT          (optional, e.g. https://cloud.langfuse.com/api/public/otel)
+/repopilot/REPOPILOT_LANGFUSE_PUBLIC_KEY   (optional)
 /repopilot/REPOPILOT_LANGFUSE_SECRET_KEY   (optional)
 ```
 
@@ -48,7 +50,9 @@ sandboxes.
 
 1. installs Docker, the Compose plugin, git and Node 22;
 2. clones the repository;
-3. writes `.env` from Parameter Store;
+3. writes `.env` from Parameter Store, and a separate `web.env` for the console holding only
+   the API token, the API URL and the allowed host (`REPOPILOT_UI_HOSTS=$DOMAIN`; the console's
+   proxy refuses requests for any other host, which stops DNS-rebinding pages);
 4. builds the sandbox images;
 5. starts the stack and runs migrations;
 6. installs Caddy as the TLS front for the console.

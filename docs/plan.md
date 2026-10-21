@@ -181,9 +181,11 @@ Each milestone gets its own detailed plan in `docs/plans/YYYY-MM-DD-mN-*.md` (wr
 | M1 Sandbox | ✅ merged; reviewed (3 Important fixed: tar breakout, symlinked-dir reads, escaped fork bombs) |
 | M2 Tools, LLM, first benchmark | ✅ merged; reviewed (1 Critical fixed: patch policy bypass) |
 | M3 LangGraph agent | ✅ merged; reviewed (1 Critical fixed: deletions hidden from validation) |
-| M4 Eval harness + 25 tasks | 🟡 built on `m4-eval`; dev v1 measured (4/15); dev v2, frozen test split and baseline pending; review pending |
-| M5 Service (API, queue, worker, GitHub PRs) | 🟡 coded on `m5-service`; queue/worker tests pass; API/GitHub tests written, not yet run |
-| M6 Observability | 🟡 coded; tests written, not yet run |
-| M7 Web console | 🟡 coded; not yet installed/type-checked |
-| M8 MCP server, hybrid code index | 🟡 coded; tests written, not yet run |
-| M9 Ship (README, architecture, AWS, demo) | 🟡 docs written; demo GIF and final results pending |
+| M4 Eval harness + 25 tasks | ✅ reviewed (5 Important + minors fixed: leaked fixes, objective difficulty, infra errors retried, final-workspace patch metric, resume config guard); dev v1 4/15, dev v2 5/15, frozen test 1/10 (7B) and 0/10 (3B baseline) |
+| M5 Service (API, queue, worker, GitHub PRs) | ✅ reviewed (1 Critical + 7 Important + minors fixed); live smoke: console run → review → approve → hidden tests graded |
+| M6 Observability | ✅ spans per run/node/LLM/tool; trace id on runs and in the console |
+| M7 Web console | ✅ type-checked and built in CI; used for the live smoke and demo |
+| M8 MCP server, hybrid code index | ✅ tests pass; MCP opens only allowed roots |
+| M9 Ship (README, architecture, AWS, demo) | ✅ results, demo GIF, architecture and AWS notes |
+
+Per-milestone decisions and review outcomes are in each plan's ledger.

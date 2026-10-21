@@ -69,8 +69,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
 
 ## Results
 
-> **Status:** dev split measured, and the agent tuned from it. The frozen test split is run once
-> and reported here unedited.
+> **Status:** final. The dev split was measured twice and the agent tuned from it; the frozen
+> test split was then run once per model (git `42f8d63`) and is reported here unedited.
 
 Benchmark: **25 tasks** across three fixture repos.
 
@@ -87,9 +87,21 @@ validated: its hidden tests fail on the bug and pass with the reference fix.
 |---|---|---|---|---|---|---|
 | dev v1 | qwen2.5 7B (local, Ollama) | 4 / 15 (26.7%) | 11–52% | 3.3% of 122 | 185 s | Before tuning: 6 runs ended on unparseable tool calls. The laptop slept during orders-api-006, so its 23,049 s (the p95 in the report) and its time-budget failure are not agent behaviour |
 | dev v2 | qwen2.5 7B (local, Ollama) | 5 / 15 (33.3%) | 15–58% | 12.7% of 166 | 311 s | After tuning (consecutive nudges, 2400 s budget). Still 6 runs lost to tool calls Ollama could not parse: the model emitted ~200 tokens of call that came back empty |
+| **test** | qwen2.5 7B (local, Ollama) | **1 / 10 (10.0%)** | 2–40% | 25.3% of 190 | 443 s | Frozen split, run once. Unresolved: 5 unparseable tool calls, 2 hit the 40-call budget, 2 the time budget |
+| test, baseline | qwen2.5 3B (local, Ollama) | 0 / 10 (0.0%) | 0–28% | 28.1% of 128 | 57 s | Same budget. Unresolved: 6 unparseable tool calls, 2 call budget, 1 no change, 1 failed the hidden tests |
 
 Each eval writes its full report, with per-task outcomes, failure reasons, token use and policy
 denials, to [`eval/reports/`](eval/reports/).
+
+**What the numbers say.** The harness held: across all 50 measured runs there were 0 harness
+errors, 0 attempts to modify protected files and 0 edits to existing tests, and every
+"resolved" was decided by hidden tests the model never saw. The bottleneck is the model. A 7B
+model running mostly on CPU loses most runs before it can be right: its tool calls come back
+malformed (Ollama returns an empty reply for a call it cannot parse) or it runs out of budget
+while exploring. The 3B baseline does worse on the same budget. Dev (33%) and test (10%) differ
+more than the task mix explains, but with 10 and 15 tasks the intervals overlap widely; read
+both as "a small local model resolves a minority of these issues". The obvious next run is a
+hosted model, which is a configuration change, not a code change.
 
 **Read these numbers with their limits:**
 
@@ -100,6 +112,9 @@ denials, to [`eval/reports/`](eval/reports/).
 - The fixtures are small, and every reference fix is one hunk in one file (*complex* means
   it changes 3 or more lines).
 - Ollama reports prompt tokens without its cached prefix, so local token counts are low.
+- The wall-clock budget is checked between steps, so one slow model call can overshoot it: on
+  this machine inventory-005 took 4,394 s against a 2,400 s budget with only five model calls.
+  Latency figures are hardware-bound.
 - GitHub runs get no network inside the sandbox, so a repository's dependencies must be baked
   into a `repopilot-sandbox-*` image named in its `.repopilot.yml`; nothing is installed at
   run time.

@@ -140,9 +140,9 @@ async def test_tool_outside_phase_is_refused():
 
 async def test_text_only_replies_fail_after_nudges():
     h = Harness()
-    final = RunState.model_validate(await h.start([text_reply("I think it is fixed.")] * 3))
+    final = RunState.model_validate(await h.start([text_reply("I think it is fixed.")] * 4))
     assert final.status == "failed" and final.failure_reason == "no_tool_calls"
-    assert final.nudges == 2 and final.usage.llm_calls == 3
+    assert final.nudges == 3 and final.usage.llm_calls == 4
 
 
 async def test_finish_without_changes():
@@ -328,7 +328,25 @@ async def test_sandbox_error_in_validate_fails_run():
 
 async def test_intake_includes_listing():
     h = Harness()
-    out = await h.start([text_reply("x")] * 3)
+    out = await h.start([text_reply("x")] * 4)
     issue = out["messages"][1]["content"]
     assert "Repository files" in issue and "app/store.py" in issue
     assert h.recorder.tool_calls == []  # the listing is context, not an agent tool call
+
+
+async def test_nudges_are_consecutive():
+    """Stray empty replies spread over a run must not end it; only a streak does."""
+    h = Harness()
+    script = [text_reply(""), tool_reply("read_file", path="app/store.py"),
+              text_reply(""), tool_reply("submit_plan", **PLAN),
+              text_reply(""), *explore_and_edit()[2:]]
+    final = RunState.model_validate(await h.start(script, auto_approve=True))
+    assert final.status == "completed", final.failure_reason
+
+
+async def test_empty_reply_nudge_mentions_malformed_call():
+    h = Harness()
+    final = RunState.model_validate(await h.start([text_reply("")] * 4))
+    nudges = [m["content"] for m in final.messages if m["role"] == "user"][1:]
+    assert nudges and "malformed" in nudges[0]
+    assert final.failure_reason == "no_tool_calls" and final.usage.llm_calls == 4

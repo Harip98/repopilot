@@ -15,11 +15,14 @@ from repopilot.sandbox_client import SandboxError
 from repopilot.tools.policy import ToolPolicy
 from repopilot.tools.registry import ToolContext
 
-MAX_NUDGES = 2
+MAX_NUDGES = 3  # consecutive replies without a tool call before the run fails
 TEST_TIMEOUT_S = 300
 OUTPUT_TAIL = 4000
 NUDGE = ("Reply with a tool call. Explore with the read tools, call submit_plan once you know "
          "the cause, and call finish when your fix is complete.")
+NUDGE_EMPTY = ("Your last reply was empty: the tool call was probably malformed and could not be "
+               "parsed. Send exactly one tool call with valid JSON arguments. For multi-line "
+               "edits prefer apply_patch, or escape newlines in replace_text strings.")
 
 
 def _user(content: str) -> dict:
@@ -72,7 +75,7 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     if state.phase == "explore":
         update["explore_steps"] = state.explore_steps + 1
     if reply.tool_calls:
-        update["route"] = "tools"
+        update |= {"route": "tools", "nudges": 0}
     elif state.nudges < MAX_NUDGES:
         update["route"] = "nudge"
     else:
@@ -81,8 +84,9 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
 
 
 async def nudge(state: RunState, runtime: Runtime[RunDeps]) -> dict:
-    return {"messages": [*state.messages, _user(NUDGE)], "nudges": state.nudges + 1,
-            "route": "llm"}
+    empty = not (state.messages[-1].get("content") or "").strip()
+    return {"messages": [*state.messages, _user(NUDGE_EMPTY if empty else NUDGE)],
+            "nudges": state.nudges + 1, "route": "llm"}
 
 
 def _calls(message: dict) -> list[ToolCall]:

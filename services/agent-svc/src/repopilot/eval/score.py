@@ -140,6 +140,8 @@ DEFINITIONS = """\
   and also as unauthorized attempts. Control tools (submit_plan, finish) are not tool calls.
 - **Latency**: wall clock per task, sandbox start to grading; p50/p95 are nearest-rank.
 - **Tokens / cost per resolved task**: totals over *all* tasks divided by resolved tasks.
+  Ollama reports prompt tokens without the KV-cached prefix, so local-model prompt totals are
+  undercounts; hosted APIs report full prompt tokens.
 - Counts are recorded per agent step; if a run crashes mid-step and resumes, that step's
   tool calls may be counted twice (at-least-once).
 - Confidence intervals are 95% Wilson score intervals.

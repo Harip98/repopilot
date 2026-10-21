@@ -70,9 +70,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: docker build -t repopilot-sandbox-base bench/images/base
-      - run: docker compose up -d --build --wait sandbox-svc
+      # End-to-end sandbox tests also checkpoint and record runs in Postgres.
+      - run: docker compose up -d --build --wait postgres redis sandbox-svc
       - run: uv sync --locked
+        working-directory: services/agent-svc
+      - run: uv run repopilot bench build-images  # base image + one per fixture repo
         working-directory: services/agent-svc
       - run: uv run pytest -m sandbox -v
         working-directory: services/agent-svc

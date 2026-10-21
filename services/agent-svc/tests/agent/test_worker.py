@@ -173,7 +173,6 @@ async def test_worker_survives_queue_errors():
             if self.calls == 1:
                 raise ConnectionError("redis restarting")
             self.stop.set()
-            return None
 
     q = FlakyQueue()
 

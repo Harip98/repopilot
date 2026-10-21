@@ -85,3 +85,15 @@ async def test_run_bench_task_reports_final_diff_when_run_fails_before_validatio
     assert outcome.result.state.failure_reason == "no_tool_calls"
     assert outcome.result.state.diff == ""  # validation never ran
     assert "app/store.py" in outcome.final_diff and outcome.graded is None
+
+
+async def test_checkpoints_only_deserialize_registered_state_types(caplog):
+    from repopilot.agent.runner import checkpoint_serde
+    from tests.agent.test_graph import Harness
+
+    h = Harness(saver=InMemorySaver(serde=checkpoint_serde()))
+    await h.start(explore_and_edit())
+    with caplog.at_level("WARNING"):
+        snap = await h.graph.aget_state({"configurable": {"thread_id": "run-1"}})
+    assert snap.next == ("approval",) and snap.values["usage"].llm_calls == 4
+    assert "unregistered type" not in caplog.text

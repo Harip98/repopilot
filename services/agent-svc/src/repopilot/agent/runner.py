@@ -13,6 +13,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -60,10 +61,17 @@ def run_async[T](fn: Callable[..., Awaitable[T]], *args: Any) -> T:
     return asyncio.run(fn(*args))
 
 
+def checkpoint_serde() -> JsonPlusSerializer:
+    """A serializer that rebuilds only our own state models from checkpoints (LangGraph is
+    moving to refusing unregistered types, which would break every resume)."""
+    models = ("Plan", "Budget", "RunUsage", "TestReport", "Approval", "GitHubTarget", "RunState")
+    return JsonPlusSerializer(allowed_msgpack_modules=[("repopilot.agent.state", m) for m in models])
+
+
 @asynccontextmanager
 async def postgres_checkpointer(dsn: str) -> AsyncIterator[AsyncPostgresSaver]:
     """LangGraph owns its checkpoint tables; setup() creates or migrates them idempotently."""
-    async with AsyncPostgresSaver.from_conn_string(dsn) as saver:
+    async with AsyncPostgresSaver.from_conn_string(dsn, serde=checkpoint_serde()) as saver:
         await saver.setup()
         yield saver
 

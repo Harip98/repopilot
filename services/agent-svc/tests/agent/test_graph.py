@@ -388,3 +388,12 @@ async def test_pr_that_cannot_be_built_fails_the_run_with_a_reason():
     final = RunState.model_validate(out)
     assert final.status == "failed" and final.failure_reason.startswith("pr_error: ")
     assert h.recorder.statuses[-1][0] == "failed"
+
+
+async def test_review_request_carries_usage_so_far():
+    h = Harness()
+    await h.start(explore_and_edit())
+    status, fields = h.recorder.statuses[-1]
+    assert status == "awaiting_approval"
+    assert fields["usage"]["llm_calls"] == 4 and fields["usage"]["tool_calls"] == 2
+    assert fields["retries"] == 0

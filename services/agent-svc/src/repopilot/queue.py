@@ -18,7 +18,10 @@ class Delivery:
 class JobQueue:
     def __init__(self, redis_url: str, stream: str = "repopilot:jobs", group: str = "workers"):
         self.stream, self.group = stream, group
-        self._r = redis.from_url(redis_url, decode_responses=True)
+        # No socket read timeout: XREADGROUP blocks server-side for block_ms, and redis-py's
+        # default (5 s) would cut every idle wait short. Connecting still times out.
+        self._r = redis.from_url(redis_url, decode_responses=True, socket_timeout=None,
+                                 socket_connect_timeout=5)
 
     async def ensure_group(self) -> None:
         try:

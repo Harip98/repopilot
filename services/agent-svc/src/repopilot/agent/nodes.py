@@ -238,8 +238,11 @@ async def request_review(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     the interrupted node on resume: written there, the row would flip back to
     awaiting_approval while the approved run is opening its PR."""
     if not state.auto_approve:
+        # Usage so far too: the reviewer sees what the run cost before deciding.
         await runtime.context.recorder.status(state.run_id, "awaiting_approval",
-                                              approval_request=_review_payload(state))
+                                              approval_request=_review_payload(state),
+                                              retries=state.retries,
+                                              usage=state.usage.model_dump())
     return {"route": "approval"}
 
 

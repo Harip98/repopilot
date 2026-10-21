@@ -71,3 +71,8 @@ async def test_lease_is_extended_while_a_job_runs(queue: JobQueue):
 
     await Worker(queue, slow, "w1", visibility_ms=300).run_once(block_ms=200)
     assert stolen == []  # w1 kept its lease for the whole 0.8 s job
+
+
+async def test_idle_blocking_read_longer_than_socket_default_returns_none(queue: JobQueue):
+    # redis-py 8 defaults socket_timeout to 5 s; the worker blocks for 5 s on an empty stream.
+    assert await queue.next("w1", block_ms=6000) is None

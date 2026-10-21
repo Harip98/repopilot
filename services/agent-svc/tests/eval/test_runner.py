@@ -3,7 +3,13 @@ import pytest
 from repopilot.agent.runner import BenchOutcome, GradeResult, RunResult
 from repopilot.agent.state import RunState, RunUsage, TestReport
 from repopilot.bench.tasks import load_tasks
-from repopilot.eval.runner import MemoryResultStore, edited_existing_tests, run_eval
+from repopilot.eval.runner import (
+    EvalConfigMismatch,
+    MemoryResultStore,
+    edited_existing_tests,
+    eval_meta,
+    run_eval,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -12,7 +18,8 @@ DIFF = ("diff --git a/app/store.py b/app/store.py\nindex 1..2 100644\n--- a/app/
         "+++ b/app/store.py\n@@ -1 +1 @@\n-a\n+b\n")
 
 
-def outcome(task_id: str, *, resolved=True, status="completed", diff=DIFF, **state_kw) -> BenchOutcome:
+def outcome(task_id: str, *, resolved=True, status="completed", diff=DIFF, final_diff=None,
+            **state_kw) -> BenchOutcome:
     state = RunState(
         run_id="r", task_id=task_id, repo="orders-api", issue_title="t", issue_text="i",
         sandbox_id="s", test_command=["pytest"], status=status, diff=diff, retries=1,
@@ -24,7 +31,8 @@ def outcome(task_id: str, *, resolved=True, status="completed", diff=DIFF, **sta
     )
     graded = GradeResult(resolved=resolved, exit_code=0 if resolved else 1, output_tail="")
     return BenchOutcome(result=RunResult(state=state, interrupt=None),
-                        graded=graded if status == "completed" else None)
+                        graded=graded if status == "completed" else None,
+                        final_diff=diff if final_diff is None else final_diff)
 
 
 class FakeRunTask:
@@ -93,3 +101,41 @@ def test_test_files_modified_flag():
     assert edited_existing_tests(edited) == ["tests/test_orders_api.py"]
     assert edited_existing_tests(added) == []
     assert edited_existing_tests(deleted) == ["tests/test_pricing.py"]
+
+
+@pytest.mark.parametrize("reason", ["llm_error: APIConnectionError", "sandbox_error: not_found"])
+async def test_infrastructure_failures_are_errors_and_retried_on_resume(reason):
+    store = MemoryResultStore()
+    down = FakeRunTask({"orders-api-001": outcome("orders-api-001", status="failed",
+                                                  failure_reason=reason)})
+    [r] = await run_eval("e1", TASKS[:1], down, store, model="m")
+    assert r.status == "error" and not r.resolved and r.error == reason
+    up = FakeRunTask({"orders-api-001": outcome("orders-api-001")})
+    [r] = await run_eval("e1", TASKS[:1], up, store, model="m")
+    assert up.calls == ["orders-api-001"] and r.status == "completed" and r.resolved
+
+
+async def test_patch_applied_reads_the_final_workspace():
+    store = MemoryResultStore()
+    edited_then_stalled = outcome("orders-api-001", status="failed", failure_reason="no_tool_calls",
+                                  diff="", final_diff=DIFF)
+    [r] = await run_eval("e1", TASKS[:1], FakeRunTask({"orders-api-001": edited_then_stalled}),
+                         store, model="m")
+    assert r.patch_applied and not r.resolved
+
+
+async def test_resume_refuses_a_different_configuration():
+    store = MemoryResultStore()
+    meta = eval_meta("e1", "m", "http://x/v1", TASKS, {"max_seconds": 1200}, split="dev")
+    run_task = FakeRunTask({t.id: outcome(t.id) for t in TASKS})
+    await run_eval("e1", TASKS[:1], run_task, store, model="m", meta=meta)
+    await run_eval("e1", TASKS, run_task, store, model="m", meta=dict(meta))  # same config resumes
+    changed = meta | {"model": "other", "budget": "max_seconds=2400"}
+    with pytest.raises(EvalConfigMismatch, match="model.*budget|budget.*model"):
+        await run_eval("e1", TASKS, run_task, store, model="other", meta=changed)
+
+
+def test_meta_has_task_set_hash():
+    a = eval_meta("e", "m", "u", TASKS, {}, split="dev")
+    b = eval_meta("e", "m", "u", TASKS[:2], {}, split="dev")
+    assert len(a["task_hash"]) == 16 and a["task_hash"] != b["task_hash"] and a["split"] == "dev"

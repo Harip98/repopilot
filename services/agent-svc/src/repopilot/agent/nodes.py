@@ -161,7 +161,7 @@ def _is_cache(path: str) -> bool:
     return path.endswith(".pyc") or any(p in _CACHE_PARTS for p in path.split("/"))
 
 
-async def _workspace_changes(sb, sid: str) -> tuple[str, list[str]]:
+async def workspace_changes(sb, sid: str) -> tuple[str, list[str]]:
     """The full change against HEAD: edits, new files, deletions, both sides of renames, and
     files hidden by .gitignore (an ignored conftest.py still runs under pytest)."""
     await sb.exec(sid, ["git", "add", "--intent-to-add", "--all"])
@@ -188,14 +188,14 @@ async def validate(state: RunState, runtime: Runtime[RunDeps]) -> dict:
 async def _validate(state: RunState, deps: RunDeps) -> dict:
     sb, sid = deps.sandbox, state.sandbox_id
     policy = ToolPolicy(state.protected_paths)
-    diff, changed = await _workspace_changes(sb, sid)
+    diff, changed = await workspace_changes(sb, sid)
     violations = [p for p in changed if policy.check_write(p)]
     report: TestReport
     if not violations and not diff.strip():
         report = TestReport(passed=False, reason="no_changes")
     elif not violations:
         res = await sb.exec(sid, state.test_command, timeout_s=TEST_TIMEOUT_S)
-        diff, changed = await _workspace_changes(sb, sid)
+        diff, changed = await workspace_changes(sb, sid)
         violations = [p for p in changed if policy.check_write(p)]
         report = TestReport(
             passed=res.exit_code == 0, reason=None if res.exit_code == 0 else "tests_failing",

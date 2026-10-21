@@ -1,9 +1,12 @@
 """Run the agent over benchmark tasks with no human in the loop and record one result each.
 
 Results go to a store keyed by (eval name, task id), so an interrupted eval resumes where it
-stopped. A task whose harness raises is recorded as status "error" and the eval moves on.
+stopped. A task whose harness raises, or whose run died on the LLM endpoint or the sandbox, is
+recorded as status "error" (not a model failure) and is retried when the eval is resumed. A
+resume must use the configuration the eval started with: the store keeps its meta.
 """
 
+import hashlib
 import json
 import platform
 import subprocess
@@ -14,18 +17,32 @@ from pathlib import Path
 from typing import Protocol
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from repopilot.agent.runner import BenchOutcome, new_run_id
+from repopilot.bench.freeze import task_hash
 from repopilot.bench.tasks import Task
 from repopilot.config import REPO_ROOT
 from repopilot.eval.score import EvalResult, render_markdown, summarize
 
 REPORTS_DIR = REPO_ROOT / "eval" / "reports"
 RunTask = Callable[[Task, str], Awaitable[BenchOutcome]]
+# Failures of the endpoint or the sandbox, not of the model.
+INFRA_FAILURES = ("llm_error", "sandbox_error")
+# Meta fields a resumed eval must share with the run that started it.
+CONFIG_KEYS = ("model", "endpoint", "git_sha", "budget", "split", "task_hash")
+
+
+class EvalConfigMismatch(RuntimeError):
+    pass
 
 
 class ResultStore(Protocol):
     async def done_task_ids(self, name: str) -> set[str]: ...
+
+    async def get_meta(self, name: str) -> dict | None: ...
+
+    async def put_meta(self, name: str, meta: dict) -> None: ...
 
     async def save(self, result: EvalResult) -> None: ...
 
@@ -35,9 +52,17 @@ class ResultStore(Protocol):
 class MemoryResultStore:
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], EvalResult] = {}
+        self.metas: dict[str, dict] = {}
 
     async def done_task_ids(self, name: str) -> set[str]:
-        return {task for (eval_run, task) in self.rows if eval_run == name}
+        return {task for (eval_run, task), r in self.rows.items()
+                if eval_run == name and r.status != "error"}
+
+    async def get_meta(self, name: str) -> dict | None:
+        return self.metas.get(name)
+
+    async def put_meta(self, name: str, meta: dict) -> None:
+        self.metas[name] = dict(meta)
 
     async def save(self, result: EvalResult) -> None:
         self.rows[(result.eval_run, result.task_id)] = result
@@ -55,8 +80,20 @@ class PgResultStore:
 
     async def done_task_ids(self, name: str) -> set[str]:
         async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
-            cur = await conn.execute("SELECT task_id FROM eval_results WHERE eval_run = %s", (name,))
+            cur = await conn.execute("SELECT task_id FROM eval_results"
+                                     " WHERE eval_run = %s AND status <> 'error'", (name,))
             return {row[0] for row in await cur.fetchall()}
+
+    async def get_meta(self, name: str) -> dict | None:
+        async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
+            cur = await conn.execute("SELECT meta FROM eval_runs WHERE name = %s", (name,))
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+    async def put_meta(self, name: str, meta: dict) -> None:
+        async with await psycopg.AsyncConnection.connect(self._dsn, autocommit=True) as conn:
+            await conn.execute("INSERT INTO eval_runs (name, meta) VALUES (%s, %s)"
+                               " ON CONFLICT (name) DO NOTHING", (name, Jsonb(meta)))
 
     async def save(self, result: EvalResult) -> None:
         row = result.model_dump()
@@ -66,7 +103,10 @@ class PgResultStore:
             await conn.execute(
                 f"INSERT INTO eval_results ({', '.join(cols)}, run_id)"
                 f" VALUES ({', '.join(['%s'] * len(cols))},"
-                " (SELECT id FROM runs WHERE id::text = %s))",
+                " (SELECT id FROM runs WHERE id::text = %s))"
+                # A retried error row is replaced by the new attempt.
+                " ON CONFLICT (eval_run, task_id) DO UPDATE SET "
+                + ", ".join(f"{c} = EXCLUDED.{c}" for c in [*cols, "run_id"]),
                 [row[c] for c in cols] + [row["run_id"]],
             )
 
@@ -98,18 +138,22 @@ def _from_outcome(name: str, task: Task, run_id: str, model: str, outcome: Bench
                   latency_ms: int) -> EvalResult:
     state, graded = outcome.result.state, outcome.graded
     u = state.usage
+    infra = (state.failure_reason or "").startswith(INFRA_FAILURES)
     return EvalResult(
         eval_run=name, task_id=task.id, run_id=run_id, model=model, difficulty=task.difficulty,
-        split=task.split, status=state.status, failure_reason=state.failure_reason,
+        split=task.split, status="error" if infra else state.status,
+        failure_reason=state.failure_reason,
         resolved=state.status in ("completed", "pr_opened") and graded is not None and graded.resolved,
-        patch_applied=bool(state.diff.strip()),
+        patch_applied=bool(outcome.final_diff.strip()),
         visible_tests_passed=bool(state.last_tests and state.last_tests.passed),
         baseline_tests_passed=state.baseline_tests_passed, retries=state.retries,
         llm_calls=u.llm_calls, tool_calls=u.tool_calls, tool_failures=u.tool_failures,
         unauthorized_attempts=u.unauthorized_attempts,
-        test_files_modified=bool(edited_existing_tests(state.diff)), latency_ms=latency_ms,
+        test_files_modified=bool(edited_existing_tests(outcome.final_diff)),
+        latency_ms=latency_ms,
         prompt_tokens=u.prompt_tokens, completion_tokens=u.completion_tokens, cost_usd=u.cost_usd,
-        heldout_exit_code=graded.exit_code if graded else None, error=None,
+        heldout_exit_code=graded.exit_code if graded else None,
+        error=state.failure_reason if infra else None,
     )
 
 
@@ -127,7 +171,19 @@ def _error_result(name: str, task: Task, run_id: str, model: str, exc: Exception
 
 async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: ResultStore, *,
                    model: str, on_result: Callable[[EvalResult], None] | None = None,
-                   clock: Callable[[], float] = time.monotonic) -> list[EvalResult]:
+                   clock: Callable[[], float] = time.monotonic,
+                   meta: dict | None = None) -> list[EvalResult]:
+    if meta is not None:
+        started = await store.get_meta(name)
+        if started is None:
+            await store.put_meta(name, meta)
+        else:
+            changed = [k for k in CONFIG_KEYS if k in started and started[k] != meta.get(k)]
+            if changed:
+                raise EvalConfigMismatch(
+                    f"eval {name!r} was started with a different configuration ("
+                    + ", ".join(f"{k}: {started[k]!r} -> {meta.get(k)!r}" for k in changed)
+                    + "); use a new --name")
     done = await store.done_task_ids(name)
     for task in tasks:
         if task.id in done:
@@ -145,14 +201,24 @@ async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: Resul
     return await store.load(name)
 
 
-def eval_meta(name: str, model: str, base_url: str, tasks: list[Task], budget: dict) -> dict:
+def tasks_hash(tasks: list[Task]) -> str:
+    """Short hash of exactly which tasks (and their fixture repos) an eval ran over."""
+    digest = hashlib.sha256()
+    for task in sorted(tasks, key=lambda t: t.id):
+        digest.update(f"{task.id}:{task_hash(task)}\n".encode())
+    return digest.hexdigest()[:16]
+
+
+def eval_meta(name: str, model: str, base_url: str, tasks: list[Task], budget: dict, *,
+              split: str) -> dict:
     def git_sha() -> str:
         proc = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
                               capture_output=True, text=True, check=False)
         return proc.stdout.strip() or "unknown"
 
     return {
-        "model": model, "endpoint": base_url, "tasks": len(tasks), "git_sha": git_sha(),
+        "model": model, "endpoint": base_url, "split": split, "tasks": len(tasks),
+        "task_hash": tasks_hash(tasks), "git_sha": git_sha(),
         "date": datetime.now(UTC).strftime("%Y-%m-%d"), "host": platform.platform(terse=True),
         "budget": ", ".join(f"{k}={v}" for k, v in budget.items()),
     }

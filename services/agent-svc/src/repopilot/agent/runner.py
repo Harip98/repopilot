@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from repopilot.agent.deps import RunDeps
 from repopilot.agent.graph import build_graph
+from repopilot.agent.nodes import workspace_changes
 from repopilot.agent.state import Budget, RunState
 from repopilot.bench.tasks import Task, image_for
 from repopilot.bench.workspace import build_base_workspace
@@ -137,6 +138,9 @@ async def grade(task: Task, sandbox: SandboxClient, sandbox_id: str) -> GradeRes
 class BenchOutcome:
     result: RunResult
     graded: GradeResult | None  # None unless the run finished as completed or pr_opened
+    # The workspace's change at the end of the run, read before grading. state.diff is only
+    # set by validation, so a run that edits and then stalls would otherwise look untouched.
+    final_diff: str = ""
 
 
 async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpointSaver, *,
@@ -154,10 +158,15 @@ async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpoint
                                        task_id=task.id, issue_ref=None, model=deps.llm.model,
                                        task_mode="bench", sandbox_id=state.sandbox_id)
         result = await start_run(state, deps, checkpointer)
-        graded = None
-        if result.interrupt is None and result.state.status in ("completed", "pr_opened"):
-            graded = await grade(task, deps.sandbox, state.sandbox_id)
-        return BenchOutcome(result=result, graded=graded)
+        graded, final_diff = None, result.state.diff
+        if result.interrupt is None:
+            try:
+                final_diff, _ = await workspace_changes(deps.sandbox, state.sandbox_id)
+            except Exception:
+                log.warning("could not read the final diff of %s", run_id, exc_info=True)
+            if result.state.status in ("completed", "pr_opened"):
+                graded = await grade(task, deps.sandbox, state.sandbox_id)
+        return BenchOutcome(result=result, graded=graded, final_diff=final_diff)
     except Exception as exc:
         if state is not None:
             await deps.recorder.status(run_id, "failed", failure_reason="error",

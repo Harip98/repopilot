@@ -332,7 +332,13 @@ def eval_run(
     from repopilot.agent.state import Budget
     from repopilot.bench.freeze import check_frozen
     from repopilot.config import get_settings
-    from repopilot.eval.runner import PgResultStore, eval_meta, run_eval, write_report
+    from repopilot.eval.runner import (
+        EvalConfigMismatch,
+        PgResultStore,
+        eval_meta,
+        run_eval,
+        write_report,
+    )
     from repopilot.sandbox_client import get_sandbox_client
 
     tasks = [t for t in _eval_tasks(split) if not task_id or t.id in task_id]
@@ -365,9 +371,14 @@ def eval_run(
 
                 meta = eval_meta(name, model_name, settings.llm_base_url, tasks,
                                  budget.model_dump(include={"max_llm_calls", "max_tool_calls",
-                                                            "max_seconds", "max_retries"}))
-                results = await run_eval(name, tasks, run_task, store, model=model_name,
-                                         on_result=progress)
+                                                            "max_seconds", "max_retries"}),
+                                 split=split)
+                try:
+                    results = await run_eval(name, tasks, run_task, store, model=model_name,
+                                             on_result=progress, meta=meta)
+                except EvalConfigMismatch as exc:
+                    typer.echo(str(exc), err=True)
+                    raise typer.Exit(1) from exc
             path = write_report(name, results, meta)
             typer.echo(f"report: {path}")
         finally:

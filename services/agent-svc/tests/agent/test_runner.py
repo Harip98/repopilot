@@ -70,3 +70,18 @@ async def test_run_bench_task_grades_and_records_baseline():
                                    run_id="22222222-2222-2222-2222-222222222222", auto_approve=True)
     assert outcome.result.state.baseline_tests_passed is True
     assert outcome.graded is not None and sandbox.destroyed == ["sbx-1"]
+
+
+async def test_run_bench_task_reports_final_diff_when_run_fails_before_validation():
+    from repopilot.agent.runner import run_bench_task
+    from repopilot.bench.tasks import load_tasks
+    from tests.fakes import text_reply
+
+    task = next(t for t in load_tasks() if t.id == "orders-api-005")
+    sandbox = ScriptedSandbox({"app/store.py": STORE})
+    script = explore_and_edit()[:3] + [text_reply("thinking")] * 5  # edits, then never calls finish
+    outcome = await run_bench_task(task, _deps(sandbox, script), InMemorySaver(),
+                                   run_id="33333333-3333-3333-3333-333333333333", auto_approve=True)
+    assert outcome.result.state.failure_reason == "no_tool_calls"
+    assert outcome.result.state.diff == ""  # validation never ran
+    assert "app/store.py" in outcome.final_diff and outcome.graded is None

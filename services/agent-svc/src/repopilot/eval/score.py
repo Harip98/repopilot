@@ -133,9 +133,15 @@ def _num(value: float | None, fmt: str = "{:,.0f}") -> str:
 DEFINITIONS = """\
 - **Resolved**: the run passed harness validation (non-empty diff, no protected paths touched,
   test suite green) *and* the task's held-out tests pass on the final workspace.
-- **Patch applied**: the final diff is non-empty. **Visible tests passed**: the last
+- **Patch applied**: the workspace differs from the imported code at the end of the run
+  (read before grading, so it counts runs that edited and then stalled or ran out of budget).
+  **Visible tests passed**: the last
   validation passed. **Baseline**: the visible suite already passed on the untouched buggy
   code, which is true for every task here, so visible-test success alone proves little.
+- **Harness errors**: the run died on the LLM endpoint or the sandbox, or the harness
+  raised. Counted in n as unresolved, and retried when the eval is resumed.
+- **Difficulty**: every reference fix is one hunk in one file; *complex* means it changes
+  3 or more lines.
 - **Tool-call failure rate**: failed tool calls / tool calls. Policy denials count as failures
   and also as unauthorized attempts. Control tools (submit_plan, finish) are not tool calls.
 - **Latency**: wall clock per task, sandbox start to grading; p50/p95 are nearest-rank.

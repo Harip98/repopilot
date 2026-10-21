@@ -77,11 +77,18 @@ def _result(out: dict) -> RunResult:
                      interrupt=interrupts[0].value if interrupts else None)
 
 
+WorkspaceHook = Callable[[Path], Awaitable[None]]
+
+
 async def prepare_bench_run(task: Task, sandbox: SandboxClient, *, run_id: str,
-                            auto_approve: bool = False, budget: Budget | None = None) -> RunState:
-    """Build the task's buggy workspace, start a sandbox from its image and upload it."""
+                            auto_approve: bool = False, budget: Budget | None = None,
+                            on_workspace: WorkspaceHook | None = None) -> RunState:
+    """Build the task's buggy workspace, start a sandbox from its image and upload it.
+    `on_workspace` sees the host copy first (e.g. to build the code index)."""
     with tempfile.TemporaryDirectory() as tmp:
         workspace = build_base_workspace(task, Path(tmp) / "ws")
+        if on_workspace is not None:
+            await on_workspace(workspace)
         sandbox_id = await sandbox.create(image_for(task))
         try:
             await sandbox.upload_dir(sandbox_id, workspace)
@@ -133,14 +140,16 @@ class BenchOutcome:
 
 
 async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpointSaver, *,
-                         run_id: str, auto_approve: bool, budget: Budget | None = None) -> BenchOutcome:
+                         run_id: str, auto_approve: bool, budget: Budget | None = None,
+                         on_workspace: WorkspaceHook | None = None) -> BenchOutcome:
     """Prepare, run and (when finished) grade one task. The sandbox is always destroyed unless
     the run is paused for approval, and an unexpected error marks the run failed."""
     state: RunState | None = None
     result: RunResult | None = None
     try:
         state = await prepare_bench_run(task, deps.sandbox, run_id=run_id,
-                                        auto_approve=auto_approve, budget=budget)
+                                        auto_approve=auto_approve, budget=budget,
+                                        on_workspace=on_workspace)
         await deps.recorder.create_run(run_id, repo=task.repo, issue_text=task.issue,
                                        task_id=task.id, issue_ref=None, model=deps.llm.model,
                                        task_mode="bench", sandbox_id=state.sandbox_id)

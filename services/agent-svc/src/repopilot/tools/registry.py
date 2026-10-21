@@ -50,6 +50,7 @@ class ToolContext:
     sandbox_id: str
     policy: ToolPolicy
     test_command: list[str]
+    code_search: Callable[[str], Awaitable[list]] | None = None  # hybrid index, when enabled
 
 
 @dataclass(frozen=True)

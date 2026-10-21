@@ -95,7 +95,7 @@ def bench_validate(task_id: str | None = typer.Option(None, "--task", help="Only
         raise typer.Exit(1)
 
 
-def _deps(sandbox, recorder, model: str | None):
+def _deps(sandbox, recorder, model: str | None, code_search=None):
     from repopilot.agent.deps import RunDeps
     from repopilot.agent.pr import NoPR
     from repopilot.config import get_settings
@@ -103,8 +103,31 @@ def _deps(sandbox, recorder, model: str | None):
     from repopilot.tools.builtin import build_registry
 
     s = get_settings()
-    return RunDeps(llm=get_chat_model(model), sandbox=sandbox, registry=build_registry(),
-                   recorder=recorder, pr=NoPR(), price_in=s.llm_price_in, price_out=s.llm_price_out)
+    return RunDeps(llm=get_chat_model(model), sandbox=sandbox,
+                   registry=build_registry(find_code_tool=code_search is not None),
+                   recorder=recorder, pr=NoPR(), price_in=s.llm_price_in, price_out=s.llm_price_out,
+                   code_search=code_search)
+
+
+def _code_index_hooks(enabled: bool, run_id: str):
+    """(code_search, on_workspace) for a run with the hybrid code index, or (None, None)."""
+    if not enabled:
+        return None, None
+    from repopilot.code_index import CodeIndex
+    from repopilot.config import get_settings
+    from repopilot.llm.embeddings import OpenAICompatEmbedder
+
+    s = get_settings()
+    index = CodeIndex(s.dsn(), OpenAICompatEmbedder(s.embed_base_url or s.llm_base_url,
+                                                    s.llm_api_key.get_secret_value(), s.embed_model))
+
+    async def search(query: str):
+        return await index.search(run_id, query)
+
+    async def build(workspace) -> None:
+        await index.index(run_id, workspace)
+
+    return search, build
 
 
 def _report(result, run_id: str) -> None:
@@ -139,6 +162,7 @@ def solve(
     task_id: str = typer.Option(..., "--task", help="Benchmark task id, e.g. orders-api-005."),
     auto_approve: bool = typer.Option(False, help="Skip the human approval step."),
     model: str | None = typer.Option(None, help="Override REPOPILOT_LLM_MODEL."),
+    code_index: bool = typer.Option(False, help="Index the workspace and give the agent find_code."),
 ) -> None:
     """Run the agent on a benchmark task until it needs approval or finishes."""
     from repopilot.agent.pg_recorder import PgRecorder
@@ -157,11 +181,12 @@ def solve(
         recorder = PgRecorder(dsn)
         try:
             async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
-                deps = _deps(sandbox, recorder, model)
                 run_id = new_run_id()
+                search, build = _code_index_hooks(code_index, run_id)
+                deps = _deps(sandbox, recorder, model, search)
                 typer.echo(f"run {run_id} ({task.id}, model {deps.llm.model})")
                 outcome = await run_bench_task(task, deps, saver, run_id=run_id,
-                                               auto_approve=auto_approve)
+                                               auto_approve=auto_approve, on_workspace=build)
                 _report(outcome.result, run_id)
                 _report_grade(outcome.graded)
         finally:
@@ -299,6 +324,7 @@ def eval_run(
     task_id: Annotated[list[str] | None, typer.Option("--task", help="Only these task ids.")] = None,
     allow_unfrozen: bool = typer.Option(False, help="Run the test split even if it changed."),
     max_seconds: float = typer.Option(1200.0, help="Per-task wall-clock budget (slow local GPUs need more)."),
+    code_index: bool = typer.Option(False, help="Give the agent the hybrid find_code index."),
 ) -> None:
     """Run the agent with auto-approval over a split and write eval/reports/<name>.*"""
     from repopilot.agent.pg_recorder import PgRecorder
@@ -327,9 +353,11 @@ def eval_run(
                 model_name = _deps(sandbox, recorder, model).llm.model
 
                 async def run_task(task, run_id):
-                    deps = _deps(sandbox, recorder, model)
+                    search, build = _code_index_hooks(code_index, run_id)
+                    deps = _deps(sandbox, recorder, model, search)
                     return await run_bench_task(task, deps, saver, run_id=run_id,
-                                                auto_approve=True, budget=budget)
+                                                auto_approve=True, budget=budget,
+                                                on_workspace=build)
 
                 def progress(r) -> None:
                     typer.echo(f"{r.task_id:<16} {'RESOLVED' if r.resolved else 'unresolved':<11}"

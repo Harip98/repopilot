@@ -1,7 +1,7 @@
 """Runtime dependencies of a run, passed as LangGraph context and never checkpointed."""
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from repopilot.agent.pr import PullRequestOpener
@@ -21,3 +21,4 @@ class RunDeps:
     price_in: float = 0.0  # USD per 1M prompt tokens
     price_out: float = 0.0
     clock: Callable[[], float] = field(default=time.time)
+    code_search: Callable[[str], Awaitable[list]] | None = None  # enables find_code

@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = "gpt-4.1-mini"
     llm_timeout_s: float = 120.0
+    embed_model: str = "nomic-embed-text"  # for the optional code index (768 dimensions)
+    embed_base_url: str = ""  # defaults to llm_base_url
     llm_price_in: float = 0.0  # USD per 1M prompt tokens; 0 for local models
     llm_price_out: float = 0.0  # USD per 1M completion tokens
     github_token: SecretStr = SecretStr("")  # used host-side only; never passed into the sandbox

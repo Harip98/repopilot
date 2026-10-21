@@ -40,7 +40,8 @@ async def intake(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     # Ground the model in the real layout up front (small models otherwise guess paths). This
     # is context from the harness, not an agent tool call, so it is not counted or recorded.
     ctx = ToolContext(sandbox=deps.sandbox, sandbox_id=state.sandbox_id,
-                      policy=ToolPolicy(state.protected_paths), test_command=state.test_command)
+                      policy=ToolPolicy(state.protected_paths), test_command=state.test_command,
+                      code_search=deps.code_search)
     listing = await deps.registry.dispatch(ctx, "list_dir", '{"depth": 2}')
     return {
         "messages": [{"role": "system", "content": system_prompt(state)},
@@ -107,7 +108,8 @@ def _calls(message: dict) -> list[ToolCall]:
 async def tools(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     ctx = ToolContext(sandbox=deps.sandbox, sandbox_id=state.sandbox_id,
-                      policy=ToolPolicy(state.protected_paths), test_command=state.test_command)
+                      policy=ToolPolicy(state.protected_paths), test_command=state.test_command,
+                      code_search=deps.code_search)
     messages = list(state.messages)
     usage = state.usage.model_copy()
     phase, plan, summary, finish_called = state.phase, state.plan, state.summary, False

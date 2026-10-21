@@ -135,6 +135,19 @@ async def git_diff(ctx: ToolContext, a: NoArgs) -> str:
     return res.stdout or "(no changes)"
 
 
+class FindCodeArgs(BaseModel):
+    query: str = Field(min_length=3, description="What you are looking for, in plain words.")
+
+
+async def find_code(ctx: ToolContext, a: FindCodeArgs) -> str:
+    if ctx.code_search is None:
+        raise ToolError("the code index is not enabled for this run; use search_code")
+    hits = await ctx.code_search(a.query)
+    if not hits:
+        return "no matches"
+    return "\n\n".join(f"{h.path}:{h.start_line}-{h.end_line}\n{h.content}" for h in hits)
+
+
 # --- write tools --------------------------------------------------------------------------
 
 class ReplaceTextArgs(BaseModel):
@@ -262,8 +275,10 @@ def _write_check(policy: ToolPolicy, args: ReplaceTextArgs | CreateFileArgs) -> 
     return policy.check_write(args.path)
 
 
-def build_registry() -> ToolRegistry:
-    return ToolRegistry([
+def build_registry(*, find_code_tool: bool = False) -> ToolRegistry:
+    extra = [Tool("find_code", "Search the code by meaning (hybrid full-text + embedding index); "
+                  "returns the best-matching code windows.", FindCodeArgs, find_code, "read")]
+    return ToolRegistry([*(extra if find_code_tool else []),
         Tool("read_file", "Read a text file with line numbers (at most 400 lines per call).",
              ReadFileArgs, read_file, "read"),
         Tool("list_dir", "List files and directories (directories end with /).",

@@ -55,8 +55,19 @@ class Approval(BaseModel):
     by: str
 
 
+class GitHubTarget(BaseModel):
+    """Where an approved change goes: the issue it fixes and the commit it was made against."""
+
+    repo: str  # owner/name
+    issue_number: int
+    issue_url: str
+    base_branch: str
+    base_sha: str
+
+
 class RunState(BaseModel):
     run_id: str
+    github: GitHubTarget | None = None
     task_id: str | None = None
     repo: str
     issue_title: str

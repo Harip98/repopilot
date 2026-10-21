@@ -12,6 +12,7 @@ from repopilot.agent.prompts import issue_message, system_prompt
 from repopilot.agent.state import Approval, Plan, RunState, TestReport, budget_exceeded
 from repopilot.llm.types import ToolCall, cost_usd
 from repopilot.sandbox_client import SandboxError
+from repopilot.tools.gitstatus import changed_paths
 from repopilot.tools.policy import ToolPolicy
 from repopilot.tools.registry import ToolContext
 
@@ -136,18 +137,7 @@ async def tools(state: RunState, runtime: Runtime[RunDeps]) -> dict:
             "route": "validate" if finish_called else "llm"}
 
 
-def parse_name_status_z(out: str) -> list[str]:
-    """Paths from `git diff --name-status -z`; renames and copies contribute both sides."""
-    tokens, paths, i = out.split("\x00"), [], 0
-    while i < len(tokens):
-        status = tokens[i]
-        if not status:
-            i += 1
-            continue
-        width = 2 if status[0] in "RC" else 1
-        paths += [p for p in tokens[i + 1:i + 1 + width] if p]
-        i += 1 + width
-    return paths
+parse_name_status_z = changed_paths  # renames and copies contribute both sides
 
 
 _CACHE_PARTS = {"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"}

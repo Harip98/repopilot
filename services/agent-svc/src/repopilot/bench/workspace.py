@@ -35,13 +35,22 @@ def _git(cwd: Path, *args: str) -> None:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
 
 
-def build_base_workspace(task: Task, dest: Path, repos_root: Path = REPOS_ROOT) -> Path:
-    shutil.copytree(repos_root / task.repo, dest, ignore=_IGNORE)
+def init_repo(dest: Path) -> None:
+    """`git init` an existing directory with host config ignored and Linux-git settings pinned."""
     _git(dest, "init", "-q", "-b", "main", "--template=")
     for key, value in _LOCAL_CONFIG.items():
         _git(dest, "config", "--local", key, value)
+
+
+def commit_all(dest: Path, message: str) -> None:
+    _git(dest, "add", "-A")
+    _git(dest, "commit", "-q", "--allow-empty", "-m", message)
+
+
+def build_base_workspace(task: Task, dest: Path, repos_root: Path = REPOS_ROOT) -> Path:
+    shutil.copytree(repos_root / task.repo, dest, ignore=_IGNORE)
+    init_repo(dest)
     if task.bug_patch.stat().st_size:
         _git(dest, "apply", "--whitespace=nowarn", str(task.bug_patch.resolve()))
-    _git(dest, "add", "-A")
-    _git(dest, "commit", "-q", "-m", f"Import {task.repo}")
+    commit_all(dest, f"Import {task.repo}")
     return dest

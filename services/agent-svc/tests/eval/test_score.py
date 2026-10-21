@@ -83,4 +83,4 @@ def test_task_table_survives_pipes_and_newlines():
     md = render_markdown("e1", {}, summarize([]), [
         result("a-001", resolved=False, status="error", error="Boom | bad\nline two")])
     row = next(line for line in md.splitlines() if line.startswith("| a-001"))
-    assert row.count("|") == 11 and "Boom \| bad line two" in row
+    assert row.count("|") == 11 and r"Boom \| bad line two" in row

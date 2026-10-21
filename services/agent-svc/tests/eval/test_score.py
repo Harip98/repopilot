@@ -51,7 +51,7 @@ def test_summarize_rates():
     assert s.visible_pass_rate == 0.25 and s.baseline_pass_rate == 1.0
     assert s.tool_failure_rate == pytest.approx(4 / 18)
     assert s.avg_retries == 0.75
-    assert s.p50_latency_s == 30.0 and s.p95_latency_s == 120.0
+    assert s.p50_latency_s == 60.0 and s.p95_latency_s == 120.0  # the error row is left out
     assert s.tokens_per_resolved == 3300 and s.cost_per_resolved == pytest.approx(0.03)
     assert s.unauthorized_attempts == 2 and s.runs_with_test_edits == 1
     assert s.failure_reasons == {"tests_failing": 1, "budget:llm_calls": 1, "error": 1}
@@ -65,3 +65,22 @@ def test_render_markdown_has_table():
     assert "| Resolution rate | 50.0% (1/2) |" in md
     assert "qwen" in md and "a-002" in md and "tests_failing" in md
     assert "## Definitions" in md
+
+
+def test_heldout_failures_have_their_own_bucket():
+    s = summarize([result("a-001", resolved=False, heldout_exit_code=1)])
+    assert s.failure_reasons == {"heldout_failed": 1}
+
+
+def test_harness_errors_do_not_skew_latency():
+    rows = [result("a-001", latency_ms=10_000),
+            result("a-002", status="error", resolved=False, latency_ms=9_000_000, error="x")]
+    s = summarize(rows)
+    assert s.p50_latency_s == 10.0 and s.p95_latency_s == 10.0
+
+
+def test_task_table_survives_pipes_and_newlines():
+    md = render_markdown("e1", {}, summarize([]), [
+        result("a-001", resolved=False, status="error", error="Boom | bad\nline two")])
+    row = next(line for line in md.splitlines() if line.startswith("| a-001"))
+    assert row.count("|") == 11 and "Boom \| bad line two" in row

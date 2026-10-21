@@ -85,6 +85,19 @@ def _rate(k: int, n: int) -> float | None:
     return None if n == 0 else k / n
 
 
+def _reason(r: EvalResult) -> str:
+    if r.status == "error":
+        return "error"
+    if r.failure_reason:
+        return r.failure_reason
+    # Finished and passed validation, but the held-out tests failed.
+    return "heldout_failed" if r.status in ("completed", "pr_opened") else r.status
+
+
+def _cell(text: str) -> str:
+    return " ".join(text.split()).replace("|", "\\|")
+
+
 def summarize(results: list[EvalResult], *, split_difficulty: bool = True) -> Summary:
     n = len(results)
     resolved = sum(r.resolved for r in results)
@@ -92,11 +105,9 @@ def summarize(results: list[EvalResult], *, split_difficulty: bool = True) -> Su
     tokens = sum(r.prompt_tokens + r.completion_tokens for r in results)
     cost = sum(r.cost_usd for r in results)
     baseline = [r.baseline_tests_passed for r in results if r.baseline_tests_passed is not None]
-    latencies = [r.latency_ms / 1000 for r in results]
-    reasons = Counter(
-        "error" if r.status == "error" else (r.failure_reason or r.status)
-        for r in results if not r.resolved
-    )
+    # Harness errors measure the outage, not the agent: kept out of the latency percentiles.
+    latencies = [r.latency_ms / 1000 for r in results if r.status != "error"]
+    reasons = Counter(_reason(r) for r in results if not r.resolved)
     by_difficulty = {}
     if split_difficulty:
         for level in sorted({r.difficulty for r in results}):
@@ -144,7 +155,8 @@ DEFINITIONS = """\
   3 or more lines.
 - **Tool-call failure rate**: failed tool calls / tool calls. Policy denials count as failures
   and also as unauthorized attempts. Control tools (submit_plan, finish) are not tool calls.
-- **Latency**: wall clock per task, sandbox start to grading; p50/p95 are nearest-rank.
+- **Latency**: wall clock per task, sandbox start to grading; p50/p95 are nearest-rank and
+  leave out harness errors, which carry no usage either.
 - **Tokens / cost per resolved task**: totals over *all* tasks divided by resolved tasks.
   Ollama reports prompt tokens without the KV-cached prefix, so local-model prompt totals are
   undercounts; hosted APIs report full prompt tokens.
@@ -190,7 +202,7 @@ def render_markdown(name: str, meta: dict, summary: Summary, results: list[EvalR
               "| Task | Difficulty | Resolved | Status | Reason | Retries | LLM / tool calls | Tokens | Time |",
               "|---|---|---|---|---|---|---|---|---|"]
     for r in sorted(results, key=lambda r: r.task_id):
-        reason = r.failure_reason or (r.error or "")[:60]
+        reason = _cell(r.failure_reason or (r.error or "")[:60])
         lines.append(
             f"| {r.task_id} | {r.difficulty} | {'yes' if r.resolved else 'no'} | {r.status} | "
             f"{reason} | {r.retries} | {r.llm_calls} / {r.tool_calls} | "

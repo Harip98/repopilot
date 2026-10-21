@@ -8,18 +8,25 @@ from repopilot.bench.tasks import REPOS_ROOT, Task
 from repopilot.config import REPO_ROOT
 
 FREEZE_FILE = REPO_ROOT / "bench" / "test_split.sha256"
-_SKIP = {"__pycache__", ".pytest_cache", ".ruff_cache"}
+# The same files the workspace builder leaves out.
+_SKIP = {"__pycache__", ".pytest_cache", ".ruff_cache", ".venv"}
 
 
 def _files(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
     return sorted(p for p in root.rglob("*")
-                  if p.is_file() and not _SKIP.intersection(p.relative_to(root).parts))
+                  if p.is_file() and p.suffix != ".pyc"
+                  and not _SKIP.intersection(p.relative_to(root).parts))
 
 
 def task_hash(task: Task, repos_root: Path = REPOS_ROOT) -> str:
-    """sha256 over the task directory and its fixture repo, line endings normalised."""
+    """sha256 over the task directory, its fixture repo and the sandbox images it runs in
+    (they pin pytest and the cleanup tools), line endings normalised."""
     digest = hashlib.sha256()
-    for label, root in (("task", task.dir), ("repo", repos_root / task.repo)):
+    images = repos_root.parent / "images"
+    for label, root in (("task", task.dir), ("repo", repos_root / task.repo),
+                        ("base-image", images / "base"), ("image", images / task.repo)):
         for path in _files(root):
             digest.update(f"{label}:{path.relative_to(root).as_posix()}\0".encode())
             digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
@@ -29,7 +36,7 @@ def task_hash(task: Task, repos_root: Path = REPOS_ROOT) -> str:
 
 def write_freeze(tasks: list[Task], path: Path = FREEZE_FILE, repos_root: Path = REPOS_ROOT) -> None:
     lines = [f"{task_hash(t, repos_root)}  {t.id}\n" for t in sorted(tasks, key=lambda t: t.id)]
-    path.write_text("".join(lines), encoding="utf-8")
+    path.write_text("".join(lines), encoding="utf-8", newline="\n")
 
 
 def check_frozen(tasks: list[Task], path: Path = FREEZE_FILE,

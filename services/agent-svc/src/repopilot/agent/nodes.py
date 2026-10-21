@@ -18,7 +18,7 @@ from repopilot.tools.gitstatus import changed_paths
 from repopilot.tools.policy import ToolPolicy
 from repopilot.tools.registry import ToolContext
 
-MAX_NUDGES = 3  # consecutive replies without a tool call before the run fails
+MAX_NUDGES = 3  # nudges in a row; the next reply without a tool call fails the run
 TEST_TIMEOUT_S = 300
 OUTPUT_TAIL = 4000
 NUDGE = ("Reply with a tool call. Explore with the read tools, call submit_plan once you know "

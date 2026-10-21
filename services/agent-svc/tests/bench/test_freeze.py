@@ -43,3 +43,26 @@ def test_frozen_split_guard(tmp_path: Path):
 
     (repos / "demo" / "app.py").write_bytes(b"changed\n")  # the fixture repo is hashed too
     assert "demo-001: changed since freeze" in check_frozen(tasks, freeze, repos_root=repos)
+
+
+def test_sandbox_images_are_hashed(tmp_path: Path):
+    task = make_task(tmp_path, "demo-001")
+    repos = tmp_path / "repos"
+    for image in ("base", "demo"):
+        (tmp_path / "images" / image).mkdir(parents=True)
+        (tmp_path / "images" / image / "Dockerfile").write_bytes(b"FROM python:3.12-slim\n")
+    before = task_hash(task, repos_root=repos)
+    (tmp_path / "images" / "base" / "Dockerfile").write_bytes(b"FROM python:3.13-slim\n")
+    after_base = task_hash(task, repos_root=repos)
+    (tmp_path / "images" / "demo" / "Dockerfile").write_bytes(b"FROM x\n")
+    assert len({before, after_base, task_hash(task, repos_root=repos)}) == 3
+
+
+def test_local_environments_are_not_hashed(tmp_path: Path):
+    task = make_task(tmp_path, "demo-001")
+    repos = tmp_path / "repos"
+    before = task_hash(task, repos_root=repos)
+    (repos / "demo" / ".venv").mkdir()
+    (repos / "demo" / ".venv" / "pyvenv.cfg").write_bytes(b"home = x\n")
+    (repos / "demo" / "app.cpython-312.pyc").write_bytes(b"\0")
+    assert task_hash(task, repos_root=repos) == before

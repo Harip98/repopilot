@@ -370,12 +370,11 @@ def eval_run(
                                f"{r.status:<10} {r.failure_reason or r.error or ''}"[:160])
 
                 meta = eval_meta(name, model_name, settings.llm_base_url, tasks,
-                                 budget.model_dump(include={"max_llm_calls", "max_tool_calls",
-                                                            "max_seconds", "max_retries"}),
-                                 split=split)
+                                 budget.model_dump(), split=split)
                 try:
-                    results = await run_eval(name, tasks, run_task, store, model=model_name,
-                                             on_result=progress, meta=meta)
+                    results = await run_eval(
+                        name, tasks, run_task, store, model=model_name, on_result=progress,
+                        meta=meta, on_saved=lambda rows: write_report(name, rows, meta))
                 except EvalConfigMismatch as exc:
                     typer.echo(str(exc), err=True)
                     raise typer.Exit(1) from exc

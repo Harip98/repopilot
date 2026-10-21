@@ -172,7 +172,11 @@ def _error_result(name: str, task: Task, run_id: str, model: str, exc: Exception
 async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: ResultStore, *,
                    model: str, on_result: Callable[[EvalResult], None] | None = None,
                    clock: Callable[[], float] = time.monotonic,
-                   meta: dict | None = None) -> list[EvalResult]:
+                   meta: dict | None = None,
+                   on_saved: Callable[[list[EvalResult]], None] | None = None,
+                   ) -> list[EvalResult]:
+    """`on_saved` gets every result so far after each task, e.g. to rewrite the report files
+    so a killed eval still leaves a current report."""
     if meta is not None:
         started = await store.get_meta(name)
         if started is None:
@@ -198,6 +202,8 @@ async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: Resul
         await store.save(result)
         if on_result:
             on_result(result)
+        if on_saved:
+            on_saved(await store.load(name))
     return await store.load(name)
 
 

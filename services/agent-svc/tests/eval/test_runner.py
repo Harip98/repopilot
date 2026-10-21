@@ -139,3 +139,11 @@ def test_meta_has_task_set_hash():
     a = eval_meta("e", "m", "u", TASKS, {}, split="dev")
     b = eval_meta("e", "m", "u", TASKS[:2], {}, split="dev")
     assert len(a["task_hash"]) == 16 and a["task_hash"] != b["task_hash"] and a["split"] == "dev"
+
+
+async def test_report_hook_sees_every_saved_result():
+    store, seen = MemoryResultStore(), []
+    run_task = FakeRunTask({t.id: outcome(t.id) for t in TASKS})
+    await run_eval("e1", TASKS, run_task, store, model="m",
+                   on_saved=lambda rows: seen.append(len(rows)))
+    assert seen == [1, 2, 3]

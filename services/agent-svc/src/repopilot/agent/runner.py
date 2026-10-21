@@ -156,3 +156,33 @@ async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpoint
                 await deps.sandbox.destroy(state.sandbox_id)
             except Exception:
                 log.warning("could not destroy sandbox %s", state.sandbox_id, exc_info=True)
+
+
+async def has_checkpoint(checkpointer: BaseCheckpointSaver, run_id: str) -> bool:
+    return await checkpointer.aget_tuple(_config(run_id)) is not None
+
+
+async def continue_run(run_id: str, deps: RunDeps, checkpointer: BaseCheckpointSaver) -> RunResult:
+    """Carry on a run from its last checkpoint (e.g. after its worker died)."""
+    graph = GRAPH.compile(checkpointer=checkpointer)
+    return _result(await graph.ainvoke(None, _config(run_id), context=deps))
+
+
+async def finish_bench(result: RunResult, task: Task | None, deps: RunDeps) -> GradeResult | None:
+    """Once a run is over: grade benchmark runs, record the grade, and free the sandbox.
+    A run paused for approval keeps its sandbox."""
+    if result.interrupt is not None:
+        return None
+    sandbox_id = result.state.sandbox_id
+    try:
+        graded = None
+        if task is not None and result.state.status in ("completed", "pr_opened"):
+            graded = await grade(task, deps.sandbox, sandbox_id)
+            await deps.recorder.event(result.state.run_id, "grade", "heldout",
+                                      graded.model_dump(exclude={"output_tail"}))
+        return graded
+    finally:
+        try:
+            await deps.sandbox.destroy(sandbox_id)
+        except Exception:
+            log.warning("could not destroy sandbox %s", sandbox_id, exc_info=True)

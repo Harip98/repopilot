@@ -43,9 +43,23 @@ class PgRecorder:
         async with self._use() as conn:
             await conn.execute(
                 "INSERT INTO runs (id, repo, issue_text, task_id, issue_ref, model, task_mode,"
-                " sandbox_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued')",
+                " sandbox_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued')"
+                # The API creates the row before the worker prepares the sandbox.
+                " ON CONFLICT (id) DO UPDATE SET sandbox_id = EXCLUDED.sandbox_id,"
+                " model = EXCLUDED.model, issue_text = EXCLUDED.issue_text",
                 (run_id, repo, issue_text, task_id, issue_ref, model, task_mode, sandbox_id),
             )
+
+    async def get_run(self, run_id: str) -> dict | None:
+        async with self._use() as conn:
+            cur = await conn.execute(
+                "SELECT status, model, task_id, task_mode, sandbox_id, issue_ref, repo"
+                " FROM runs WHERE id::text = %s", (run_id,))
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        keys = ("status", "model", "task_id", "task_mode", "sandbox_id", "issue_ref", "repo")
+        return dict(zip(keys, row, strict=True))
 
     async def claim_for_approval(self, run_id: str) -> dict | None:
         """Atomically move a run from awaiting_approval to running. Exactly one concurrent

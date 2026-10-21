@@ -50,6 +50,9 @@ class MemoryRecorder:
     async def create_run(self, run_id: str, **fields: Any) -> None:
         self.runs.append({"run_id": run_id} | fields)
 
+    async def get_run(self, run_id: str) -> dict | None:
+        return next((r for r in self.runs if r["run_id"] == run_id), None)
+
     async def status(self, run_id: str, status: str, **fields: Any) -> None:
         self.statuses.append((status, fields))
 

@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
     environment:
       SANDBOX_TOKEN: ${REPOPILOT_SANDBOX_TOKEN:-dev-sandbox-token-change-me}
-      SANDBOX_IMAGE_PREFIXES: "repopilot-"
+      SANDBOX_IMAGE_PREFIXES: "repopilot-sandbox-,repopilot-bench-"
       SANDBOX_TTL: "2h"
     ports:
       - "127.0.0.1:8090:8090"

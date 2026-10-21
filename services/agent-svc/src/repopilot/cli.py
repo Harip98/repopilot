@@ -317,8 +317,8 @@ def bench_freeze(note: str = typer.Option(..., help="Why the split is being (re)
     log = FREEZE_FILE.parent / "FREEZE_LOG.md"
     if not log.exists():
         log.write_text("# Test split freezes\n\n| Date (UTC) | Tasks | Note |\n|---|---|---|\n",
-                       encoding="utf-8")
-    with log.open("a", encoding="utf-8") as fh:
+                       encoding="utf-8", newline="\n")
+    with log.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(f"| {datetime.now(UTC):%Y-%m-%d %H:%M} | {len(tasks)} | {note} |\n")
     typer.echo(f"froze {len(tasks)} test tasks into {FREEZE_FILE.name}")
 

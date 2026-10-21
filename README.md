@@ -85,7 +85,7 @@ validated: its hidden tests fail on the bug and pass with the reference fix.
 
 | Run | Model | Resolved | 95% CI | Tool-call failures | Median time | Notes |
 |---|---|---|---|---|---|---|
-| dev v1 | qwen2.5 7B (local, Ollama) | 4 / 15 (26.7%) | 11–52% | 3.3% of 122 | 185 s | Before tuning: 7 runs ended on unparseable tool calls |
+| dev v1 | qwen2.5 7B (local, Ollama) | 4 / 15 (26.7%) | 11–52% | 3.3% of 122 | 185 s | Before tuning: 6 runs ended on unparseable tool calls. The laptop slept during orders-api-006, so its 23,049 s (the p95 in the report) and its time-budget failure are not agent behaviour |
 
 Each eval writes its full report, with per-task outcomes, failure reasons, token use and policy
 denials, to [`eval/reports/`](eval/reports/).

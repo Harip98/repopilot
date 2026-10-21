@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // gzip would buffer the run timeline's event stream; put compression in the TLS proxy.
+  compress: false,
   async headers() {
     return [
       {

@@ -25,7 +25,7 @@ const (
 	maxOutputBytes  = 64 << 10
 	reapInterval    = time.Minute
 	defaultTTL      = 2 * time.Hour
-	defaultPrefixes = "repopilot-"
+	defaultPrefixes = "repopilot-sandbox-,repopilot-bench-"
 )
 
 func getenv(key, def string) string {

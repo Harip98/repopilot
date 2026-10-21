@@ -10,8 +10,16 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
 @app.callback()
-def main() -> None:
+def main(ctx: typer.Context) -> None:
     """RepoPilot: an AI software engineering agent."""
+    import atexit
+
+    from repopilot.config import get_settings
+    from repopilot.telemetry import setup_tracing
+
+    provider = setup_tracing(get_settings(), f"repopilot-{ctx.invoked_subcommand or 'cli'}")
+    if provider is not None:
+        atexit.register(provider.shutdown)  # flush buffered spans before the process exits
 
 
 @app.command()

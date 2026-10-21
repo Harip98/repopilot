@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from repopilot.agent import nodes
 from repopilot.agent.deps import RunDeps
 from repopilot.agent.state import RunState
+from repopilot.telemetry import traced_node
 
 EDGES: dict[str, list[str]] = {
     "intake": ["llm"],
@@ -35,7 +36,7 @@ def _follow_route(state: RunState) -> str:
 def build_graph() -> StateGraph:
     graph = StateGraph(RunState, context_schema=RunDeps)
     for name in EDGES:
-        graph.add_node(name, getattr(nodes, name))
+        graph.add_node(name, traced_node(name, getattr(nodes, name)))
     graph.add_edge(START, "intake")
     for name, targets in EDGES.items():
         graph.add_conditional_edges(name, _follow_route, targets)

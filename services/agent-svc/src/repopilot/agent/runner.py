@@ -22,6 +22,7 @@ from repopilot.agent.state import Budget, RunState
 from repopilot.bench.tasks import Task, image_for
 from repopilot.bench.workspace import build_base_workspace
 from repopilot.sandbox_client import SandboxClient
+from repopilot.telemetry import run_span
 
 GRAPH = build_graph()
 log = logging.getLogger(__name__)
@@ -98,7 +99,9 @@ async def prepare_bench_run(task: Task, sandbox: SandboxClient, *, run_id: str,
 
 async def start_run(state: RunState, deps: RunDeps, checkpointer: BaseCheckpointSaver) -> RunResult:
     graph = GRAPH.compile(checkpointer=checkpointer)
-    return _result(await graph.ainvoke(state, _config(state.run_id), context=deps))
+    with run_span("repopilot.run", state.run_id, task_id=state.task_id, repo=state.repo,
+                  model=deps.llm.model):
+        return _result(await graph.ainvoke(state, _config(state.run_id), context=deps))
 
 
 async def resume_run(run_id: str, decision: dict, deps: RunDeps,
@@ -110,7 +113,8 @@ async def resume_run(run_id: str, decision: dict, deps: RunDeps,
     if "approval" not in snapshot.next:
         raise NotAwaitingApproval(f"run {run_id} is {snapshot.values.get('status')}, "
                                   "not awaiting approval")
-    return _result(await graph.ainvoke(Command(resume=decision), _config(run_id), context=deps))
+    with run_span("repopilot.run.resume", run_id, decision=decision.get("decision")):
+        return _result(await graph.ainvoke(Command(resume=decision), _config(run_id), context=deps))
 
 
 async def grade(task: Task, sandbox: SandboxClient, sandbox_id: str) -> GradeResult:
@@ -165,7 +169,8 @@ async def has_checkpoint(checkpointer: BaseCheckpointSaver, run_id: str) -> bool
 async def continue_run(run_id: str, deps: RunDeps, checkpointer: BaseCheckpointSaver) -> RunResult:
     """Carry on a run from its last checkpoint (e.g. after its worker died)."""
     graph = GRAPH.compile(checkpointer=checkpointer)
-    return _result(await graph.ainvoke(None, _config(run_id), context=deps))
+    with run_span("repopilot.run.continue", run_id):
+        return _result(await graph.ainvoke(None, _config(run_id), context=deps))
 
 
 async def finish_bench(result: RunResult, task: Task | None, deps: RunDeps) -> GradeResult | None:

@@ -4,8 +4,10 @@ graph's conditional edges follow. One node execution is one checkpointed step.""
 import openai
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
+from opentelemetry import trace
 from pydantic import ValidationError
 
+from repopilot import telemetry
 from repopilot.agent.control import CONTROL_TOOLS, allowed_tool_names, tools_for
 from repopilot.agent.deps import RunDeps
 from repopilot.agent.prompts import issue_message, system_prompt
@@ -32,7 +34,9 @@ def _user(content: str) -> dict:
 
 async def intake(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
-    await deps.recorder.status(state.run_id, "running")
+    trace_id = telemetry.trace_id_hex(trace.get_current_span())
+    await deps.recorder.status(state.run_id, "running",
+                               **({"trace_id": trace_id} if trace_id else {}))
     # Ground the model in the real layout up front (small models otherwise guess paths). This
     # is context from the harness, not an agent tool call, so it is not counted or recorded.
     ctx = ToolContext(sandbox=deps.sandbox, sandbox_id=state.sandbox_id,
@@ -51,7 +55,12 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     if reason := budget_exceeded(state, deps.clock()):
         return {"failure_reason": f"budget:{reason}", "route": "fail"}
     try:
-        result = await deps.llm.chat(state.messages, tools_for(state, deps.registry))
+        with telemetry.llm_span(deps.llm.model, state.run_id, len(state.messages)) as span:
+            result = await deps.llm.chat(state.messages, tools_for(state, deps.registry))
+            telemetry.record_llm_result(
+                span, result.usage.prompt_tokens, result.usage.completion_tokens,
+                result.finish_reason, [c.name for c in result.message.tool_calls],
+                result.message.content)
     except openai.APIError as exc:  # the client already retried; the run cannot continue
         await deps.recorder.event(state.run_id, "llm", "error", {"error": str(exc)[:1000]})
         return {"failure_reason": f"llm_error: {type(exc).__name__}", "route": "fail"}
@@ -126,7 +135,10 @@ async def tools(state: RunState, runtime: Runtime[RunDeps]) -> dict:
             content = f"ERROR: budget exhausted ({reason}); this call was not run."
         else:
             usage.tool_calls += 1
-            outcome = await deps.registry.dispatch(ctx, call.name, call.arguments)
+            with telemetry.tool_span(call.name, state.run_id) as span:
+                outcome = await deps.registry.dispatch(ctx, call.name, call.arguments)
+                telemetry.record_tool_result(span, outcome.ok, outcome.denied, outcome.error,
+                                             outcome.latency_ms, outcome.content)
             usage.tool_failures += not outcome.ok
             usage.unauthorized_attempts += outcome.denied
             await deps.recorder.tool_call(state.run_id, usage.tool_calls, call, outcome)

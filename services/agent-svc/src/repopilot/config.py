@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     llm_price_in: float = 0.0  # USD per 1M prompt tokens; 0 for local models
     llm_price_out: float = 0.0  # USD per 1M completion tokens
     github_token: SecretStr = SecretStr("")  # used host-side only; never passed into the sandbox
+    github_api_url: str = "https://api.github.com"
+    api_token: SecretStr = SecretStr("dev-api-token-change-me")  # bearer token for /v1 routes
+    ui_origin: str = "http://127.0.0.1:3000"  # the only browser origin CORS allows
+    job_visibility_s: int = 1800  # a job unacknowledged this long is reclaimed by another worker
 
     def dsn(self) -> str:
         return make_conninfo(

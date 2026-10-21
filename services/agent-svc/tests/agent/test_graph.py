@@ -350,3 +350,15 @@ async def test_empty_reply_nudge_mentions_malformed_call():
     nudges = [m["content"] for m in final.messages if m["role"] == "user"][1:]
     assert nudges and "malformed" in nudges[0]
     assert final.failure_reason == "no_tool_calls" and final.usage.llm_calls == 4
+
+
+async def test_approval_and_result_written_to_run_row():
+    h = Harness()
+    await h.start(explore_and_edit())
+    status, fields = h.recorder.statuses[-1]
+    assert status == "awaiting_approval" and "app/store.py" in fields["approval_request"]["diff"]
+    await h.resume({"decision": "approve", "by": "alice"})
+    status, fields = h.recorder.statuses[-1]
+    assert status == "completed"
+    assert fields["result"]["summary"] == "compare case-insensitively"
+    assert fields["result"]["plan"]["files"] == ["app/store.py"] and fields["result"]["diff"]

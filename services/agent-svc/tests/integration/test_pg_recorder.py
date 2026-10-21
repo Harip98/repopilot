@@ -104,3 +104,12 @@ async def test_claim_for_approval_is_exclusive(recorder, settings, conn: psycopg
     assert len(winners) == 1 and winners[0]["task_id"] == "orders-api-005"
     assert conn.execute("SELECT status FROM runs WHERE id = %s", (run_id,)).fetchone()[0] == "running"
     assert await recorder.claim_for_approval(str(uuid.uuid4())) is None
+
+
+async def test_approval_request_and_result_stored(recorder, conn: psycopg.Connection):
+    run_id = await _new_run(recorder)
+    payload = {"diff": "diff --git a/x b/x", "tests": {"exit_code": 0}, "summary": "s"}
+    await recorder.status(run_id, "awaiting_approval", approval_request=payload)
+    await recorder.status(run_id, "completed", result={"summary": "s", "diff": "d"})
+    row = conn.execute("SELECT approval_request, result FROM runs WHERE id = %s", (run_id,)).fetchone()
+    assert row == (payload, {"summary": "s", "diff": "d"})

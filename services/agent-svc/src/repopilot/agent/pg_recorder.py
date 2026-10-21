@@ -79,6 +79,10 @@ class PgRecorder:
             if key in fields:
                 sets.append(f"{key} = %s")
                 params.append(fields[key])
+        for key in ("approval_request", "result"):
+            if key in fields:
+                sets.append(f"{key} = %s")
+                params.append(Jsonb(fields[key]))
         usage = fields.get("usage") or {}
         for key in USAGE_COLUMNS:
             if key in usage:

@@ -233,17 +233,10 @@ async def approval(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     if state.auto_approve:
         decision = Approval(decision="approve", by="auto")
     else:
-        await deps.recorder.status(state.run_id, "awaiting_approval")
-        tests = state.last_tests
-        value = interrupt({
-            "run_id": state.run_id, "diff": state.diff, "summary": state.summary,
-            "plan": state.plan.model_dump() if state.plan else None,
-            "tests": {"exit_code": tests.exit_code if tests else None,
-                      "output_tail": tests.output_tail if tests else "",
-                      # True means a green suite says little: it was green before the change.
-                      "passed_before_change": state.baseline_tests_passed},
-        })
-        decision = Approval.model_validate(value)
+        request = _review_payload(state)
+        # Stored on the run row for the API; idempotent when this node re-runs on resume.
+        await deps.recorder.status(state.run_id, "awaiting_approval", approval_request=request)
+        decision = Approval.model_validate(interrupt(request))
     # Time spent waiting for the reviewer is not agent time: shift the clock's origin by it.
     paused = 0.0 if state.auto_approve else max(0.0, deps.clock() - state.validated_at)
     started_at = state.started_at + paused
@@ -270,11 +263,24 @@ async def fail(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     return {"status": "failed", "route": "record"}
 
 
+def _review_payload(state: RunState) -> dict:
+    """What a reviewer needs to decide: the change, the evidence, and the agent's reasoning."""
+    tests = state.last_tests
+    return {
+        "run_id": state.run_id, "diff": state.diff, "summary": state.summary,
+        "plan": state.plan.model_dump() if state.plan else None,
+        "tests": {"exit_code": tests.exit_code if tests else None,
+                  "output_tail": tests.output_tail if tests else "",
+                  # True means a green suite says little: it was green before the change.
+                  "passed_before_change": state.baseline_tests_passed},
+    }
+
+
 async def record(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     await deps.recorder.status(
         state.run_id, state.status, failure_reason=state.failure_reason, pr_url=state.pr_url,
-        retries=state.retries, usage=state.usage.model_dump(),
+        retries=state.retries, usage=state.usage.model_dump(), result=_review_payload(state),
     )
     await deps.recorder.event(state.run_id, "record", state.status,
                               {"failure_reason": state.failure_reason})

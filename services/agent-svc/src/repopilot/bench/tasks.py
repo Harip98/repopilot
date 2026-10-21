@@ -76,3 +76,18 @@ def load_tasks(
 
 def image_for(task: Task) -> str:
     return f"repopilot-bench-{task.repo}"
+
+
+COMPLEX_MIN_LINES = 3
+
+
+def changed_lines(patch: str) -> int:
+    """Added plus removed lines in a unified diff (file headers excluded)."""
+    return sum(1 for ln in patch.splitlines()
+               if ln[:1] in "+-" and not ln.startswith(("+++ ", "--- ")))
+
+
+def difficulty_for(fix_patch: str) -> str:
+    """Objective label from the reference fix: every fix in this benchmark is a single hunk,
+    so "complex" just means the fix changes at least COMPLEX_MIN_LINES lines."""
+    return "complex" if changed_lines(fix_patch) >= COMPLEX_MIN_LINES else "simple"

@@ -9,9 +9,9 @@ issue: |
 
   Expected "http_server_error" and "parse_xml_document". Plain names like "userName"
   and trailing acronyms like "userID" are fine.
-difficulty: complex
+difficulty: simple
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_case_acronyms.py]
-protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [textkit/case.py]

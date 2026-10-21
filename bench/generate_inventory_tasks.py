@@ -8,7 +8,7 @@ T = {}
 
 T["001"] = dict(
     title="Shipments are costed LIFO instead of FIFO",
-    difficulty="complex", split="dev", heldout="fifo",
+    split="dev", heldout="fifo",
     expected_files=["inventory/ledger.py"],
     edits=[("inventory/ledger.py", "            layer = layers[0]\n", "            layer = layers[-1]\n"),
            ("inventory/ledger.py", "                layers.popleft()\n", "                layers.pop()\n")],
@@ -37,7 +37,7 @@ T["001"] = dict(
 
 T["002"] = dict(
     title="Overselling crashes and wipes stock",
-    difficulty="simple", split="dev", heldout="oversell",
+    split="dev", heldout="oversell",
     expected_files=["inventory/ledger.py"],
     edits=[("inventory/ledger.py",
             "        available = self.on_hand(sku)\n"
@@ -73,7 +73,7 @@ T["002"] = dict(
 
 T["003"] = dict(
     title="Reorder point rounds down",
-    difficulty="simple", split="dev", heldout="reorder_rounding",
+    split="dev", heldout="reorder_rounding",
     expected_files=["inventory/reorder.py"],
     edits=[("inventory/reorder.py",
             "    return math.ceil(avg_daily_demand * (lead_time_days + safety_days))\n",
@@ -100,7 +100,7 @@ T["003"] = dict(
 
 T["004"] = dict(
     title="No reorder suggested exactly at the reorder point",
-    difficulty="simple", split="dev", heldout="reorder_boundary",
+    split="dev", heldout="reorder_boundary",
     expected_files=["inventory/reorder.py"],
     edits=[("inventory/reorder.py",
             "    return on_hand <= reorder_point(avg_daily_demand, lead_time_days, safety_days)\n",
@@ -126,7 +126,7 @@ T["004"] = dict(
 
 T["005"] = dict(
     title="Importing an export grouped by SKU fails",
-    difficulty="complex", split="test", heldout="date_order",
+    split="test", heldout="date_order",
     expected_files=["inventory/io.py"],
     edits=[("inventory/io.py", "    for tx in sorted(transactions, key=lambda t: t.on):\n",
             "    for tx in transactions:\n")],
@@ -179,7 +179,7 @@ T["005"] = dict(
 
 T["006"] = dict(
     title="Negative receipts are accepted",
-    difficulty="simple", split="test", heldout="receive_validation",
+    split="test", heldout="receive_validation",
     expected_files=["inventory/ledger.py"],
     edits=[("inventory/ledger.py",
             "        if qty <= 0:\n"
@@ -206,7 +206,7 @@ T["006"] = dict(
 
 T["007"] = dict(
     title="Stock report shows the warehouse total on every row",
-    difficulty="complex", split="test", heldout="report_values",
+    split="test", heldout="report_values",
     expected_files=["inventory/report.py"],
     edits=[("inventory/report.py", "            sku=sku, on_hand=on_hand, value=ledger.valuation(sku),\n",
             "            sku=sku, on_hand=on_hand, value=ledger.valuation(),\n")],

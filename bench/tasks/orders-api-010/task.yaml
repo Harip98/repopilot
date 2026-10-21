@@ -6,9 +6,9 @@ issue: |
   request times out. Since the last release some customers end up with two identical
   orders. A repeated key should return the original order (status 200) and must not create
   a new one.
-difficulty: complex
+difficulty: simple
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_idempotency.py]
-protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/store.py]

@@ -14,5 +14,5 @@ difficulty: complex
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_out_of_range.py]
-protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [app/pagination.py]

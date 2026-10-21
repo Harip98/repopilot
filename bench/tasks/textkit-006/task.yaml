@@ -8,9 +8,9 @@ issue: |
       parse_csv_line('1,"say ""hi""",x')
 
   We get the quotes dropped instead of `['1', 'say "hi"', 'x']`.
-difficulty: simple
+difficulty: complex
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_csv_escaped_quotes.py]
-protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [textkit/csvline.py]

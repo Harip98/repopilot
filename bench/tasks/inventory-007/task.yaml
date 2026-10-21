@@ -4,9 +4,9 @@ title: "Stock report shows the warehouse total on every row"
 issue: |
   In the weekly stock report every SKU shows the same VALUE, and it is the value of the
   whole warehouse. Each row should show the value at cost of that SKU's units only.
-difficulty: complex
+difficulty: simple
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_report_values.py]
-protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [inventory/report.py]

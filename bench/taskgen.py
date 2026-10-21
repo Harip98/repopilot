@@ -16,7 +16,16 @@ BENCH = Path(__file__).resolve().parent
 GIT = ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf"]
 # Held-out test names plus the test infrastructure that decides how pytest runs them.
 PROTECTED = ('["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", '
-             '"pytest.ini", "setup.cfg", "tox.ini"]')
+             '"pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]')
+# Objective difficulty, mirrored in repopilot.bench.tasks.difficulty_for: every reference fix
+# is a single hunk, so "complex" means it changes at least this many lines.
+COMPLEX_MIN_LINES = 3
+
+
+def difficulty_for(fix: str) -> str:
+    changed = sum(1 for ln in fix.splitlines()
+                  if ln[:1] in "+-" and not ln.startswith(("+++ ", "--- ")))
+    return "complex" if changed >= COMPLEX_MIN_LINES else "simple"
 
 
 def diff_for(repo: Path, edits: list[tuple[str, str, str]]) -> tuple[str, str]:
@@ -61,7 +70,7 @@ def write_tasks(repo_name: str, specs: dict[str, dict], test_command: str = "[py
             f"repo: {repo_name}\n"
             f"title: \"{spec['title']}\"\n"
             f"issue: |\n{_yaml_block(spec['issue'])}\n"
-            f"difficulty: {spec['difficulty']}\n"
+            f"difficulty: {difficulty_for(fix)}\n"
             f"split: {spec['split']}\n"
             f"test_command: {test_command}\n"
             f"heldout_command: [pytest, -q, {heldout_name}]\n"

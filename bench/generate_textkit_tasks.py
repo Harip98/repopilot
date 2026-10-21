@@ -8,7 +8,7 @@ T = {}
 
 T["001"] = dict(
     title="slugify leaves doubled separators",
-    difficulty="simple", split="dev", heldout="slug_separators",
+    split="dev", heldout="slug_separators",
     expected_files=["textkit/slug.py"],
     edits=[("textkit/slug.py", '_NON_ALNUM = re.compile(r"[^a-z0-9]+")\n',
             '_NON_ALNUM = re.compile(r"[^a-z0-9]")\n')],
@@ -38,7 +38,7 @@ T["001"] = dict(
 
 T["002"] = dict(
     title="Accented letters disappear from slugs",
-    difficulty="simple", split="dev", heldout="slug_accents",
+    split="dev", heldout="slug_accents",
     expected_files=["textkit/slug.py"],
     edits=[("textkit/slug.py",
             '    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")\n',
@@ -65,7 +65,7 @@ T["002"] = dict(
 
 T["003"] = dict(
     title="slugify(max_len=...) cuts words in half",
-    difficulty="complex", split="dev", heldout="slug_max_len",
+    split="dev", heldout="slug_max_len",
     expected_files=["textkit/slug.py"],
     edits=[("textkit/slug.py",
             '    kept = ""\n'
@@ -102,7 +102,7 @@ T["003"] = dict(
 
 T["004"] = dict(
     title="truncate returns strings longer than the limit",
-    difficulty="simple", split="dev", heldout="truncate_limit",
+    split="dev", heldout="truncate_limit",
     expected_files=["textkit/wrap.py"],
     edits=[("textkit/wrap.py", "    room = limit - len(ellipsis)\n", "    room = limit\n")],
     issue="""\
@@ -130,7 +130,7 @@ T["004"] = dict(
 
 T["005"] = dict(
     title="wrap produces lines wider than the width",
-    difficulty="complex", split="dev", heldout="wrap_long_words",
+    split="dev", heldout="wrap_long_words",
     expected_files=["textkit/wrap.py"],
     edits=[("textkit/wrap.py",
             "        while len(word) > width:\n"
@@ -165,7 +165,7 @@ T["005"] = dict(
 
 T["006"] = dict(
     title="Escaped quotes in CSV fields are lost",
-    difficulty="simple", split="test", heldout="csv_escaped_quotes",
+    split="test", heldout="csv_escaped_quotes",
     expected_files=["textkit/csvline.py"],
     edits=[("textkit/csvline.py",
             "            if ch == '\"':\n"
@@ -197,7 +197,7 @@ T["006"] = dict(
 
 T["007"] = dict(
     title="Trailing empty CSV fields are dropped",
-    difficulty="simple", split="test", heldout="csv_empty_fields",
+    split="test", heldout="csv_empty_fields",
     expected_files=["textkit/csvline.py"],
     edits=[("textkit/csvline.py",
             '    fields.append("".join(buf))\n    return fields\n',
@@ -226,7 +226,7 @@ T["007"] = dict(
 
 T["008"] = dict(
     title="camel_to_snake mangles acronyms",
-    difficulty="complex", split="test", heldout="case_acronyms",
+    split="test", heldout="case_acronyms",
     expected_files=["textkit/case.py"],
     edits=[("textkit/case.py",
             '_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")\n',

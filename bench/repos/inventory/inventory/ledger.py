@@ -32,7 +32,7 @@ class Ledger:
         self._layers.setdefault(sku, deque()).append(Layer(qty, Decimal(unit_cost), at))
 
     def ship(self, sku: str, qty: int, at: date) -> Decimal:
-        """Remove `qty` units, oldest first (FIFO), and return their cost."""
+        """Remove `qty` units and return their cost."""
         if qty <= 0:
             raise ValueError("shipped quantity must be positive")
         available = self.on_hand(sku)

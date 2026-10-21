@@ -1,7 +1,6 @@
 import re
 
-# A boundary before an upper-case letter that follows a lower-case letter or digit
-# (userName), and inside a run of capitals before the last one (HTTPServer -> HTTP|Server).
+# Positions where camel_to_snake inserts an underscore.
 _BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 

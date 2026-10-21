@@ -30,7 +30,7 @@ def load_transactions(path: Path) -> list[Transaction]:
 
 
 def apply_transactions(ledger: Ledger, transactions: list[Transaction]) -> None:
-    """Apply in date order; same-day rows keep their file order (sorted() is stable)."""
+    """Apply transactions to the ledger."""
     for tx in sorted(transactions, key=lambda t: t.on):
         if tx.kind == "receive":
             ledger.receive(tx.sku, tx.qty, tx.unit_cost or Decimal("0"), tx.on)

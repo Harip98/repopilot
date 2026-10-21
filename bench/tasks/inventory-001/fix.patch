@@ -1,5 +1,5 @@
 diff --git b/inventory/ledger.py a/inventory/ledger.py
-index f5a0475..c0e7b10 100644
+index e679fa0..1dbed88 100644
 --- b/inventory/ledger.py
 +++ a/inventory/ledger.py
 @@ -41,13 +41,13 @@ class Ledger:

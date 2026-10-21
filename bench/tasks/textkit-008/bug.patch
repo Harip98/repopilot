@@ -1,11 +1,11 @@
 diff --git a/textkit/case.py b/textkit/case.py
-index 3bc7388..514a8b7 100644
+index 949c2a2..b425c16 100644
 --- a/textkit/case.py
 +++ b/textkit/case.py
-@@ -2,7 +2,7 @@ import re
+@@ -1,7 +1,7 @@
+ import re
  
- # A boundary before an upper-case letter that follows a lower-case letter or digit
- # (userName), and inside a run of capitals before the last one (HTTPServer -> HTTP|Server).
+ # Positions where camel_to_snake inserts an underscore.
 -_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 +_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
  

@@ -1,9 +1,9 @@
 diff --git b/inventory/ledger.py a/inventory/ledger.py
-index fd72794..c0e7b10 100644
+index 3014911..1dbed88 100644
 --- b/inventory/ledger.py
 +++ a/inventory/ledger.py
 @@ -35,6 +35,9 @@ class Ledger:
-         """Remove `qty` units, oldest first (FIFO), and return their cost."""
+         """Remove `qty` units and return their cost."""
          if qty <= 0:
              raise ValueError("shipped quantity must be positive")
 +        available = self.on_hand(sku)

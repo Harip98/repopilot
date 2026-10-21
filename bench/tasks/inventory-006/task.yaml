@@ -9,5 +9,5 @@ difficulty: simple
 split: test
 test_command: [pytest, -q]
 heldout_command: [pytest, -q, tests/test_heldout_receive_validation.py]
-protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"]
+protected_paths: ["tests/test_heldout_*", "conftest.py", "*/conftest.py", "pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini"]
 expected_files: [inventory/ledger.py]

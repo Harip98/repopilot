@@ -8,7 +8,7 @@ T = {}
 
 T["001"] = dict(
     title="Order list never shows the last partial page",
-    difficulty="simple", split="dev", heldout="pagination_pages",
+    split="dev", heldout="pagination_pages",
     expected_files=["app/pagination.py"],
     edits=[("app/pagination.py", "    return (total + page_size - 1) // page_size\n",
             "    return total // page_size\n")],
@@ -35,7 +35,7 @@ T["001"] = dict(
 
 T["002"] = dict(
     title="page_size above 100 is not capped",
-    difficulty="simple", split="dev", heldout="page_size_cap",
+    split="dev", heldout="page_size_cap",
     expected_files=["app/pagination.py"],
     edits=[("app/pagination.py", "    return min(page_size, MAX_PAGE_SIZE)\n",
             "    return page_size\n")],
@@ -67,7 +67,7 @@ T["002"] = dict(
 
 T["003"] = dict(
     title="sort=-created_at returns oldest orders first",
-    difficulty="simple", split="dev", heldout="sort_direction",
+    split="dev", heldout="sort_direction",
     expected_files=["app/store.py"],
     edits=[("app/store.py", '        descending = sort.startswith("-")\n',
             '        descending = sort.endswith("-")\n')],
@@ -99,7 +99,7 @@ T["003"] = dict(
 
 T["004"] = dict(
     title="Percentage discounts are taken off as dollars",
-    difficulty="simple", split="dev", heldout="discount",
+    split="dev", heldout="discount",
     expected_files=["app/pricing.py"],
     edits=[("app/pricing.py",
             '    return amount * (Decimal("100") - discount_pct) / Decimal("100")\n',
@@ -136,7 +136,7 @@ T["004"] = dict(
 
 T["005"] = dict(
     title="Status filter only matches lowercase values",
-    difficulty="simple", split="dev", heldout="status_case",
+    split="dev", heldout="status_case",
     expected_files=["app/store.py"],
     edits=[("app/store.py", "            wanted = status.lower()\n", "            wanted = status\n")],
     issue="""\
@@ -159,7 +159,7 @@ T["005"] = dict(
 
 T["006"] = dict(
     title="Shipped orders can be cancelled",
-    difficulty="simple", split="dev", heldout="cancel_rules",
+    split="dev", heldout="cancel_rules",
     expected_files=["app/store.py"],
     edits=[("app/store.py", "CANCELLABLE = {OrderStatus.PENDING, OrderStatus.PAID}\n",
             "CANCELLABLE = {OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED}\n")],
@@ -193,7 +193,7 @@ T["006"] = dict(
 
 T["007"] = dict(
     title="Some order totals are one cent low",
-    difficulty="complex", split="test", heldout="money_rounding",
+    split="test", heldout="money_rounding",
     expected_files=["app/pricing.py"],
     edits=[("app/pricing.py", '    return amount * (Decimal("1") + TAX_RATE)\n',
             "    return Decimal(float(amount) * (1 + float(TAX_RATE)))\n")],
@@ -233,7 +233,7 @@ T["007"] = dict(
 
 T["008"] = dict(
     title="Requesting a page past the end returns 500",
-    difficulty="complex", split="test", heldout="out_of_range",
+    split="test", heldout="out_of_range",
     expected_files=["app/pagination.py"],
     edits=[("app/pagination.py", "    start = (page - 1) * size\n",
             "    pages = page_count(len(items), size)\n"
@@ -268,7 +268,7 @@ T["008"] = dict(
 
 T["009"] = dict(
     title="Order subtotal includes cancelled line items",
-    difficulty="complex", split="test", heldout="cancelled_lines",
+    split="test", heldout="cancelled_lines",
     expected_files=["app/store.py"],
     edits=[("app/store.py", "            subtotal=round_money(subtotal(data.items)),\n",
             "            subtotal=round_money(sum((i.unit_price * i.quantity for i in data.items), Decimal(\"0\"))),\n")],
@@ -299,7 +299,7 @@ T["009"] = dict(
 
 T["010"] = dict(
     title="Retried POST /orders with the same Idempotency-Key creates a duplicate",
-    difficulty="complex", split="test", heldout="idempotency",
+    split="test", heldout="idempotency",
     expected_files=["app/store.py"],
     edits=[("app/store.py",
             "            if idempotency_key is not None:\n"

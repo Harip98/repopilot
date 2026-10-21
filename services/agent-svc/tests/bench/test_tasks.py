@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from repopilot.bench.tasks import image_for, load_tasks
+from repopilot.bench.tasks import changed_lines, difficulty_for, image_for, load_tasks
 from repopilot.bench.workspace import build_base_workspace
 
 TASK_YAML = """\
@@ -94,3 +94,21 @@ def test_real_tasks_protect_test_infrastructure():
             assert policy.check_write(path), (task.id, path)
         assert policy.check_write(task.expected_files[0]) is None, task.id
         assert (task.heldout_dir / "tests" / "conftest.py").is_file(), task.id
+
+
+def test_difficulty_rule_counts_changed_lines():
+    one = "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n"
+    three = "--- a/x.py\n+++ b/x.py\n@@ -1,3 +1 @@\n-a\n-b\n-c\n"
+    assert changed_lines(one) == 2 and difficulty_for(one) == "simple"
+    assert changed_lines(three) == 3 and difficulty_for(three) == "complex"
+
+
+def test_real_tasks_follow_the_difficulty_rule():
+    for task in load_tasks():
+        assert task.difficulty == difficulty_for(task.fix_patch.read_text(encoding="utf-8")), task.id
+
+
+def test_real_tasks_protect_every_pytest_config_file():
+    for task in load_tasks():
+        for name in ("pytest.ini", ".pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"):
+            assert name in task.protected_paths, (task.id, name)

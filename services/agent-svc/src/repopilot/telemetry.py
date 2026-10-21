@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from langgraph.errors import GraphInterrupt
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -88,8 +89,17 @@ def traced_node(name: str, fn: Callable[..., Awaitable[dict]]) -> Callable[..., 
     async def wrapper(state, runtime):
         with tracer().start_as_current_span(f"repopilot.node.{name}", attributes={
             "repopilot.run_id": state.run_id, "repopilot.phase": state.phase,
-        }) as span:
-            update = await fn(state, runtime)
+        }, record_exception=False, set_status_on_exception=False) as span:
+            try:
+                update = await fn(state, runtime)
+            except GraphInterrupt:
+                # interrupt() pauses the run for a reviewer; it is not a failure.
+                span.set_attribute("repopilot.interrupted", True)
+                raise
+            except BaseException as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, f"{type(exc).__name__}: {exc}"))
+                raise
             if route := update.get("route"):
                 span.set_attribute("repopilot.route", route)
             if reason := update.get("failure_reason"):

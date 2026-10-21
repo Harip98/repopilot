@@ -180,3 +180,53 @@ async def test_error_shape_and_headers(api):
     assert resp.status_code == 404 and resp.json()["error"]["code"] == "not_found"
     assert resp.headers["X-Trace-Id"] == "abc"
     assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+class DownQueue(FakeQueue):
+    async def enqueue(self, job: dict) -> str:
+        raise ConnectionError("redis is restarting")
+
+
+@pytest.fixture
+async def api_down(settings, conn):
+    recorder = PgRecorder(settings.dsn())
+
+    class BrokenResults:
+        async def load(self, name):
+            raise RuntimeError("secret internals")
+
+    app = create_app(ApiServices(
+        repo=RunsRepo(settings.dsn()), claims=recorder, queue=DownQueue(), results=BrokenResults(),
+        load_task={t.id: t for t in load_tasks()}.get, token=TOKEN,
+        ui_origin="http://127.0.0.1:3000", default_model="test-model", poll_s=0.01))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                                 base_url="http://api") as client:
+        yield client, conn
+    await recorder.close()
+
+
+async def test_queue_outage_leaves_no_orphaned_runs(api_down):
+    client, conn = api_down
+    resp = await client.post("/v1/runs", json={"task_id": "orders-api-005"}, headers=AUTH)
+    assert resp.status_code == 503 and resp.json()["error"]["code"] == "queue_unavailable"
+    assert conn.execute("SELECT status, failure_reason FROM runs").fetchall() == [
+        ("failed", "enqueue_failed")]
+    run_id = _run(conn, "awaiting_approval", approval_request={"diff": "d"})
+    resp = await client.post(f"/v1/runs/{run_id}/approval", json={"decision": "approve"},
+                             headers=AUTH)
+    assert resp.status_code == 503
+    assert conn.execute("SELECT status FROM runs WHERE id = %s", (run_id,)).fetchone() == (
+        "awaiting_approval",)  # the reviewer can decide again
+
+
+async def test_unhandled_errors_keep_the_error_shape(api_down):
+    client, _ = api_down
+    resp = await client.get("/v1/evals/x", headers=AUTH)
+    assert resp.status_code == 500 and resp.json()["error"]["code"] == "internal"
+    assert "secret" not in resp.text and resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+async def test_api_docs_are_not_public(api):
+    client, _, _ = api
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert (await client.get(path)).status_code == 404, path

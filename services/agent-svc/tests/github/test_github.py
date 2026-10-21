@@ -233,3 +233,17 @@ async def test_benchmark_runs_open_no_pr():
 
 def test_git_available_for_import():
     assert subprocess.run(["git", "--version"], capture_output=True, check=False).returncode == 0
+
+
+def test_hardlink_out_of_the_tree_is_a_workspace_error(tmp_path: Path):
+    root = "acme-shop-aaaaaaa/"
+    link = tarfile.TarInfo(root + "passwd")
+    link.type, link.linkname = tarfile.LNKTYPE, "/etc/passwd"
+    with pytest.raises(WorkspaceError):
+        extract_tarball(_tarball([_dir(root), (link, b"")]), tmp_path)
+
+
+def test_repo_config_cannot_pick_the_agent_image(tmp_path: Path):
+    (tmp_path / ".repopilot.yml").write_text("image: repopilot-agent-svc\n")
+    with pytest.raises(WorkspaceError):
+        load_repo_config(tmp_path)

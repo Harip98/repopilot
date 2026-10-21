@@ -59,6 +59,8 @@ services:
     restart: unless-stopped
     build: {context: ., dockerfile: services/agent-svc/Dockerfile}
     image: repopilot-agent-svc
+    # Listens on all interfaces inside the container but is published on loopback only.
+    command: ["repopilot", "serve", "--host", "0.0.0.0", "--port", "8000", "--allow-default-token"]
     environment: &agent-env
       REPOPILOT_PG_HOST: postgres
       REPOPILOT_PG_PORT: "5432"

@@ -60,3 +60,13 @@ def test_setup_disabled_without_endpoint():
 def test_langfuse_basic_auth_header():
     s = Settings(_env_file=None, langfuse_public_key="pk-lf-1", langfuse_secret_key="sk-lf-2")
     assert telemetry._otlp_headers(s) == {"Authorization": "Basic cGstbGYtMTpzay1sZi0y"}
+
+
+async def test_pausing_for_approval_is_not_an_error_span(spans):
+    from opentelemetry.trace import StatusCode
+
+    h = Harness()
+    await start_run(make_state(), h.deps(explore_and_edit()), h.saver)
+    approval = next(s for s in spans.get_finished_spans() if s.name == "repopilot.node.approval")
+    assert approval.status.status_code != StatusCode.ERROR
+    assert approval.attributes["repopilot.interrupted"] is True and not approval.events

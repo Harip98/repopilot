@@ -15,6 +15,7 @@ from repopilot.github.client import GitHubClient
 from repopilot.sandbox_client import SandboxClient
 
 CONFIG_FILE = ".repopilot.yml"
+SANDBOX_IMAGE_PREFIXES = ("repopilot-sandbox-", "repopilot-bench-")
 
 
 class WorkspaceError(RuntimeError):
@@ -31,8 +32,8 @@ class RepoConfig(BaseModel):
     @field_validator("image")
     @classmethod
     def _allowlisted(cls, v: str) -> str:
-        if not v.startswith("repopilot-"):
-            raise ValueError("image must be a repopilot-* sandbox image")
+        if not v.startswith(SANDBOX_IMAGE_PREFIXES):
+            raise ValueError("image must be a repopilot-sandbox-* or repopilot-bench-* image")
         return v
 
 
@@ -66,7 +67,8 @@ def extract_tarball(data: bytes, dest: Path) -> None:
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
             tar.extractall(dest, filter=_strip_root)
-    except (tarfile.TarError, OSError) as exc:
+    except (tarfile.TarError, OSError, KeyError) as exc:
+        # KeyError: a hard link to a member the filter refused (or that is outside the tree).
         raise WorkspaceError(f"unsafe or unreadable repository archive: {exc}") from exc
 
 

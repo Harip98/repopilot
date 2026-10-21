@@ -9,6 +9,17 @@ from repopilot import __version__
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
+def configure_logging() -> None:
+    """INFO for RepoPilot; HTTP clients only from WARNING, because request URLs can carry
+    secrets (a private repository's tarball redirect has a short-lived token in its query)."""
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("repopilot").setLevel(logging.INFO)
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 @app.callback()
 def main(ctx: typer.Context) -> None:
     """RepoPilot: an AI software engineering agent."""
@@ -443,6 +454,9 @@ def eval_compare(names: list[str]) -> None:
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address."),
     port: int = typer.Option(8000, help="Port."),
+    allow_default_token: bool = typer.Option(
+        False, help="Bind off loopback with the default token (only behind a loopback-only "
+                    "port mapping, as in docker-compose)."),
 ) -> None:
     """Run the HTTP API (runs, SSE timeline, approvals, evals)."""
     import uvicorn
@@ -450,6 +464,7 @@ def serve(
     from repopilot.agent.pg_recorder import PgRecorder
     from repopilot.agent.runner import run_async
     from repopilot.api import ApiServices, create_app
+    from repopilot.api.app import bind_problem
     from repopilot.api.repo import RunsRepo
     from repopilot.bench.tasks import load_tasks
     from repopilot.config import get_settings
@@ -457,6 +472,9 @@ def serve(
     from repopilot.queue import JobQueue
 
     s = get_settings()
+    if not allow_default_token and (problem := bind_problem(host, s.api_token.get_secret_value())):
+        typer.echo(problem, err=True)
+        raise typer.Exit(1)
     tasks = {t.id: t for t in load_tasks()}
     app_ = create_app(ApiServices(
         repo=RunsRepo(s.dsn()), claims=PgRecorder(s.dsn()), queue=JobQueue(s.redis_url),
@@ -470,7 +488,6 @@ def serve(
 @app.command()
 def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis group.")) -> None:
     """Execute queued runs: start, continue after a crash, and resume after approval."""
-    import logging
 
     import anyio
 
@@ -487,7 +504,7 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
     from repopilot.tools.builtin import build_registry
     from repopilot.worker import JobError, Worker, WorkerServices, give_up, handle_job
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    configure_logging()
     s = get_settings()
     tasks = {t.id: t for t in load_tasks()}
     token = s.github_token.get_secret_value()
@@ -536,12 +553,17 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
 @app.command("mcp")
 def mcp_command() -> None:
     """Serve RepoPilot's sandboxed tools over MCP (stdio), e.g. for Claude Code."""
+    import os
+    from pathlib import Path
+
     from repopilot.agent.runner import run_async
+    from repopilot.config import get_settings
     from repopilot.mcp_server import WorkspaceTools, serve_stdio
     from repopilot.sandbox_client import get_sandbox_client
 
     async def run() -> None:
         async with get_sandbox_client() as sandbox:
-            await serve_stdio(WorkspaceTools(sandbox))
+            roots = [Path(r) for r in get_settings().mcp_roots.split(os.pathsep) if r]
+            await serve_stdio(WorkspaceTools(sandbox, roots=roots or None))
 
     run_async(run)

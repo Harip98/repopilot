@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     ui_origin: str = "http://127.0.0.1:3000"  # the only browser origin CORS allows
     job_visibility_s: int = 1800  # a job unacknowledged this long is reclaimed by another worker
     otel_endpoint: str = ""  # OTLP/HTTP base URL; empty disables trace export
+    mcp_roots: str = ""  # os.pathsep-separated directories `repopilot mcp` may open (default: cwd)
     otel_capture_content: bool = False  # put prompt/completion and tool output text on spans
     langfuse_public_key: str = ""  # with the secret, sent as Basic auth to Langfuse's OTLP endpoint
     langfuse_secret_key: SecretStr = SecretStr("")

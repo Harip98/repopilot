@@ -1,6 +1,7 @@
 """The RepoPilot HTTP API. It records runs and queues jobs; workers run the agent."""
 
 import hmac
+import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -19,7 +20,10 @@ from repopilot.api.sse import run_events
 from repopilot.bench.tasks import Task
 from repopilot.eval.score import EvalResult, summarize
 
+log = logging.getLogger(__name__)
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+DEFAULT_TOKEN = "dev-api-token-change-me"
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -35,6 +39,20 @@ class Queue(Protocol):
 
 class Claims(Protocol):
     async def claim_for_approval(self, run_id: str) -> dict | None: ...
+
+    async def status(self, run_id: str, status: str, **fields: Any) -> None: ...
+
+
+def bind_problem(host: str, token: str) -> str | None:
+    """Why serving on `host` with `token` is unsafe, or None. Off loopback the API is reachable
+    by others, so the shipped default token, or a guessable one, is refused."""
+    if host in _LOOPBACK:
+        return None
+    if token == DEFAULT_TOKEN:
+        return f"REPOPILOT_API_TOKEN is the default; set a random one before binding {host}"
+    if len(token) < 24:
+        return "REPOPILOT_API_TOKEN is too short to expose; use at least 24 random characters"
+    return None
 
 
 class ResultStore(Protocol):
@@ -89,7 +107,9 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
 
 
 def create_app(services: ApiServices) -> FastAPI:
-    app = FastAPI(title="RepoPilot", version="0.1.0")
+    # No public schema or docs UI: every route but /healthz needs the token.
+    app = FastAPI(title="RepoPilot", version="0.1.0", docs_url=None, redoc_url=None,
+                  openapi_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=[services.ui_origin],
                        allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type",
                                                                      "Last-Event-ID"])
@@ -112,6 +132,22 @@ def create_app(services: ApiServices) -> FastAPI:
         code = {401: "unauthorized", 404: "not_found", 405: "method_not_allowed"}.get(
             exc.status_code, "http_error")
         return _error(exc.status_code, code, str(exc.detail))
+
+    @app.exception_handler(Exception)
+    async def internal_error(request: Request, exc: Exception) -> JSONResponse:
+        # Runs outside the middleware stack, so the headers are set here; details stay in logs.
+        log.exception("unhandled error on %s %s", request.method, request.url.path)
+        response = _error(500, "internal", "internal error")
+        response.headers.update(SECURITY_HEADERS)
+        return response
+
+    async def enqueue(job: dict, on_failure: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await services.queue.enqueue(job)
+        except Exception as exc:
+            log.exception("could not enqueue %s job for run %s", job["type"], job["run_id"])
+            await on_failure()
+            raise ApiError(503, "queue_unavailable", "the job queue is unavailable; try again") from exc
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -143,8 +179,9 @@ def create_app(services: ApiServices) -> FastAPI:
             await services.repo.create_queued_run(
                 run_id, repo=body.repo, issue_text="", task_id=None,
                 issue_ref=f"{body.repo}#{body.issue_number}", task_mode="github", model=model)
-        await services.queue.enqueue({"type": "start", "run_id": run_id,
-                                      "auto_approve": body.auto_approve})
+        await enqueue({"type": "start", "run_id": run_id, "auto_approve": body.auto_approve},
+                      lambda: services.claims.status(run_id, "failed",
+                                                     failure_reason="enqueue_failed"))
         return {"run_id": run_id, "status": "queued"}
 
     @app.get("/v1/runs", dependencies=auth)
@@ -182,8 +219,10 @@ def create_app(services: ApiServices) -> FastAPI:
         # Claim first: of two concurrent decisions only one may resume the run.
         if await services.claims.claim_for_approval(run_id) is None:
             raise ApiError(409, "not_awaiting_approval", f"run {run_id} is not awaiting approval")
-        await services.queue.enqueue({"type": "resume", "run_id": run_id, "decision": {
-            "decision": body.decision, "comment": body.comment, "by": "web"}})
+        # If the job cannot be queued, hand the decision back to the reviewer.
+        await enqueue({"type": "resume", "run_id": run_id, "decision": {
+            "decision": body.decision, "comment": body.comment, "by": "web"}},
+            lambda: services.claims.status(run_id, "awaiting_approval"))
         return {"run_id": run_id, "status": "running"}
 
     @app.get("/v1/evals", dependencies=auth)

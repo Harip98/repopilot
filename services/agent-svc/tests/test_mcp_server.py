@@ -19,7 +19,7 @@ def test_every_tool_takes_a_workspace():
 
 async def test_open_use_close(tmp_path: Path):
     sandbox = ScriptedSandbox({"app.py": b"x = 1\n"})
-    core = WorkspaceTools(sandbox)
+    core = WorkspaceTools(sandbox, roots=[tmp_path])
     text, err = await core.call("open_workspace", {"path": str(tmp_path)})
     assert not err
     wid = __import__("json").loads(text)["workspace_id"]
@@ -36,3 +36,21 @@ async def test_rejects_unknown_workspace_and_relative_paths():
     core = WorkspaceTools(ScriptedSandbox())
     assert (await core.call("read_file", {"workspace_id": "nope", "path": "a"}))[1]
     assert (await core.call("open_workspace", {"path": "relative/dir"}))[1]
+
+
+async def test_open_is_limited_to_allowed_roots(tmp_path: Path):
+    allowed, other = tmp_path / "work", tmp_path / "home"
+    (allowed / "repo").mkdir(parents=True)
+    (other / ".ssh").mkdir(parents=True)
+    core = WorkspaceTools(ScriptedSandbox(), roots=[allowed])
+    text, err = await core.call("open_workspace", {"path": str(other / ".ssh")})
+    assert err and "outside" in text
+    text, err = await core.call("open_workspace", {"path": str(allowed / "repo" / ".." / ".." / "home")})
+    assert err
+    assert not (await core.call("open_workspace", {"path": str(allowed / "repo")}))[1]
+
+
+async def test_open_refuses_non_sandbox_images(tmp_path: Path):
+    core = WorkspaceTools(ScriptedSandbox(), roots=[tmp_path])
+    text, err = await core.call("open_workspace", {"path": str(tmp_path), "image": "repopilot-agent-svc"})
+    assert err and "image" in text

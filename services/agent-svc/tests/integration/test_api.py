@@ -36,7 +36,8 @@ async def api(settings, conn):
     app = create_app(ApiServices(
         repo=RunsRepo(settings.dsn()), claims=recorder, queue=queue,
         results=PgResultStore(settings.dsn()), load_task=tasks.get, token=TOKEN,
-        ui_origin="http://127.0.0.1:3000", default_model="test-model", poll_s=0.01))
+        ui_origin="http://127.0.0.1:3000", default_model="test-model", poll_s=0.01,
+        settle_s=0.05))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://api") as client:
         yield client, queue, conn
@@ -80,7 +81,8 @@ async def test_create_validates_body(api):
     client, queue, _ = api
     for body in ({}, {"task_id": "orders-api-005", "repo": "a/b", "issue_number": 1},
                  {"repo": "not a repo", "issue_number": 1}, {"repo": "a/b"},
-                 {"task_id": "nope-001"}):
+                 {"task_id": "nope-001"},
+                 {"repo": "a/b", "issue_number": 1, "auto_approve": True}):  # PRs need a human
         resp = await client.post("/v1/runs", json=body, headers=AUTH)
         assert resp.status_code == 422, body
         assert resp.json()["error"]["code"] in ("invalid_request", "unknown_task")

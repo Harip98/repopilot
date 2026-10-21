@@ -19,7 +19,8 @@ untrusted repositories from the public internet: for that, swap the container ru
 ## 1. Instance
 
 - **Hosted model:** `t3.xlarge` (4 vCPU, 16 GiB), Amazon Linux 2023, 60 GiB gp3. Each sandbox is
-  capped at 1 CPU and 1 GiB, so this runs about two agent runs at once.
+  capped at 1 CPU and 1 GiB. The compose file starts one worker, which handles one run at a
+  time; add workers (each with its own `--name`) to run more at once, about two per 4 vCPU.
 - **Local model:** `g5.xlarge` and Ollama instead.
 - **Security group:** inbound 443 from your office or VPN range only; nothing else. SSH through
   SSM Session Manager, not port 22.

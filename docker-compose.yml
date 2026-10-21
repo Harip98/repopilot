@@ -3,6 +3,7 @@ name: repopilot
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: repopilot
       POSTGRES_PASSWORD: ${REPOPILOT_PG_PASSWORD:-repopilot_dev_pw}
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:6380:6379"
@@ -54,6 +56,7 @@ services:
   # run on the host: `repopilot serve` and `repopilot worker`.
   api:
     profiles: ["app"]
+    restart: unless-stopped
     build: {context: ., dockerfile: services/agent-svc/Dockerfile}
     image: repopilot-agent-svc
     environment: &agent-env
@@ -80,6 +83,8 @@ services:
     profiles: ["app"]
     image: repopilot-agent-svc
     command: ["repopilot", "worker", "--name", "compose-worker-1"]
+    restart: unless-stopped
+    healthcheck: {disable: true}  # the image's HTTP check is for the API
     environment: *agent-env
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:

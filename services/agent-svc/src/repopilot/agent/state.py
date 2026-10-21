@@ -6,8 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Phase = Literal["explore", "edit"]
-Route = Literal["llm", "tools", "nudge", "validate", "diagnose", "approval", "open_pr", "fail",
-                "record", "end"]
+Route = Literal["llm", "tools", "nudge", "validate", "diagnose", "request_review", "approval",
+                "open_pr", "fail", "record", "end"]
 RunStatus = Literal["running", "awaiting_approval", "approved", "rejected", "pr_opened",
                     "completed", "failed"]
 

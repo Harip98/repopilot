@@ -56,8 +56,10 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   paths a patch touches, which closes five bypasses through quoted names, prefixes, header-only,
   binary and renamed diffs. A second, independent check then runs at validation.
 - **Durable by construction.** Every graph step is a Postgres checkpoint. A worker that dies is
-  replaced by another that continues from the last step. Approval is an `interrupt()` that waits
-  for days if needed, and two concurrent approvals cannot both resume a run.
+  replaced by another that continues from the last step, and a worker renews its job's lease
+  while it runs. Approval is an `interrupt()`; two concurrent approvals cannot both resume a
+  run. The run's sandbox is reaped after 2 hours, so an approval later than that fails the
+  run as `sandbox_expired`.
 - **One process holds the Docker socket.** `sandbox-svc` is small, written in Go with the
   standard library only, authenticated and loopback-only. The Python agent never touches
   Docker.

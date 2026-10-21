@@ -486,7 +486,7 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
     from repopilot.queue import JobQueue
     from repopilot.sandbox_client import get_sandbox_client
     from repopilot.tools.builtin import build_registry
-    from repopilot.worker import Worker, WorkerServices, handle_job
+    from repopilot.worker import JobError, Worker, WorkerServices, give_up, handle_job
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     s = get_settings()
@@ -507,10 +507,10 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
 
                 async def prepare_github(run: dict, deps: RunDeps):
                     if github is None:
-                        raise RuntimeError("REPOPILOT_GITHUB_TOKEN is not set")
+                        raise JobError("REPOPILOT_GITHUB_TOKEN is not set")
+                    # Never auto-approved: a pull request always waits for a person.
                     return await prepare_github_run(run, run_id=run["run_id"], github=github,
-                                                    sandbox=sandbox,
-                                                    auto_approve=run.get("auto_approve", False))
+                                                    sandbox=sandbox, auto_approve=False)
 
                 services = WorkerServices(deps_for=deps_for, checkpointer=saver,
                                           recorder=recorder, load_task=tasks.get,
@@ -520,8 +520,7 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
                     await handle_job(job, services)
 
                 async def exhausted(job: dict) -> None:
-                    await recorder.status(job["run_id"], "failed",
-                                          failure_reason="job_retries_exhausted")
+                    await give_up(job, recorder)
 
                 typer.echo(f"worker {name} consuming {queue.stream}")
                 await Worker(queue, handle, name, visibility_ms=s.job_visibility_s * 1000,

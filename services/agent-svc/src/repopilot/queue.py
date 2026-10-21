@@ -41,6 +41,10 @@ class JobQueue:
     async def ack(self, entry_id: str) -> None:
         await self._r.xack(self.stream, self.group, entry_id)
 
+    async def touch(self, consumer: str, entry_id: str) -> None:
+        """Renew a lease: reset the entry's idle time without counting a new delivery."""
+        await self._r.xclaim(self.stream, self.group, consumer, 0, [entry_id], justid=True)
+
     async def reclaim(self, consumer: str, min_idle_ms: int, count: int = 10) -> list[Delivery]:
         """Take over entries another consumer read but never acknowledged."""
         _, entries, _ = await self._r.xautoclaim(self.stream, self.group, consumer, min_idle_ms,

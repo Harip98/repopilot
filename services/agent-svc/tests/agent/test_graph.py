@@ -362,3 +362,12 @@ async def test_approval_and_result_written_to_run_row():
     assert status == "completed"
     assert fields["result"]["summary"] == "compare case-insensitively"
     assert fields["result"]["plan"]["files"] == ["app/store.py"] and fields["result"]["diff"]
+
+
+async def test_resuming_does_not_reopen_the_review():
+    h = Harness()
+    await h.start(explore_and_edit())
+    paused_at = len(h.recorder.statuses)
+    await h.resume({"decision": "approve", "by": "alice"})
+    after = [s for s, _ in h.recorder.statuses[paused_at:]]
+    assert "awaiting_approval" not in after and after[-1] == "completed"

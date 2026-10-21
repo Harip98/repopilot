@@ -52,6 +52,7 @@ class ApiServices:
     ui_origin: str
     default_model: str
     poll_s: float = 1.0
+    settle_s: float = 10.0  # how long an event stream stays open after the run ends
 
 
 class CreateRun(BaseModel):
@@ -68,6 +69,8 @@ class CreateRun(BaseModel):
             raise ValueError("give either task_id, or repo and issue_number")
         if github and (self.issue_number is None or not _REPO.match(self.repo)):
             raise ValueError("repo must be owner/name and issue_number is required")
+        if github and self.auto_approve:
+            raise ValueError("auto_approve is for benchmark runs; a pull request needs a reviewer")
         return self
 
 
@@ -169,7 +172,8 @@ def create_app(services: ApiServices) -> FastAPI:
         await _run_or_404(run_id)
         start = int(last_event_id) if last_event_id and last_event_id.isdigit() else after
         return StreamingResponse(
-            run_events(services.repo, run_id, start, poll_s=services.poll_s),
+            run_events(services.repo, run_id, start, poll_s=services.poll_s,
+                       settle_s=services.settle_s),
             media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
     @app.post("/v1/runs/{run_id}/approval", status_code=202, dependencies=auth)

@@ -1,11 +1,11 @@
 """The agent state machine.
 
     intake -> llm <-> tools          explore: read tools + submit_plan; edit: all + finish
-              |  \\-> nudge -> llm    (text-only replies, at most twice)
-              |       tools --finish--> validate --pass--> approval --approve--> open_pr -> record
+              |  \\-> nudge -> llm    (text-only replies, at most three in a row)
+              |       tools --finish--> validate --pass--> request_review -> approval
               |                            |  \\--fail--> diagnose -> llm (bounded retries)
-              \\--budget--> fail <---------+                approval --reject+comment--> llm (once)
-                              \\-> record -> END
+              \\--budget--> fail <---------+     approval --approve--> open_pr -> record
+                              \\-> record -> END   approval --reject+comment--> llm (once)
 """
 
 from langgraph.graph import END, START, StateGraph
@@ -20,7 +20,8 @@ EDGES: dict[str, list[str]] = {
     "llm": ["tools", "nudge", "fail"],
     "nudge": ["llm"],
     "tools": ["llm", "validate"],
-    "validate": ["approval", "diagnose", "fail"],
+    "validate": ["request_review", "diagnose", "fail"],
+    "request_review": ["approval"],
     "diagnose": ["llm"],
     "approval": ["open_pr", "llm", "record"],
     "open_pr": ["record"],

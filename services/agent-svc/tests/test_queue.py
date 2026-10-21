@@ -56,3 +56,18 @@ async def test_retries_exhausted_marks_failed(queue: JobQueue):
         await worker.run_once(block_ms=50)
     assert exhausted == ["r3"]
     assert await queue.reclaim("w1", min_idle_ms=0) == []  # acked after giving up
+
+
+async def test_lease_is_extended_while_a_job_runs(queue: JobQueue):
+    import anyio
+
+    await queue.enqueue({"type": "start", "run_id": "r4"})
+    stolen = []
+
+    async def slow(job):
+        for _ in range(8):
+            await anyio.sleep(0.1)
+            stolen.extend(await queue.reclaim("w2", min_idle_ms=300))
+
+    await Worker(queue, slow, "w1", visibility_ms=300).run_once(block_ms=200)
+    assert stolen == []  # w1 kept its lease for the whole 0.8 s job

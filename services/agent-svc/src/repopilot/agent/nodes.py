@@ -212,7 +212,7 @@ async def _validate(state: RunState, deps: RunDeps) -> dict:
     update = {"diff": diff, "last_tests": report, "usage": usage, "finish_called": False,
               "validated_at": deps.clock()}
     if report.passed:
-        return update | {"route": "approval"}
+        return update | {"route": "request_review"}
     if report.reason != "protected_paths_changed" and state.retries < state.budget.max_retries:
         return update | {"route": "diagnose"}
     return update | {"failure_reason": report.reason, "route": "fail"}
@@ -232,15 +232,22 @@ async def diagnose(state: RunState, runtime: Runtime[RunDeps]) -> dict:
             "route": "llm"}
 
 
+async def request_review(state: RunState, runtime: Runtime[RunDeps]) -> dict:
+    """Publish the review request on the run row. A node of its own because LangGraph re-runs
+    the interrupted node on resume: written there, the row would flip back to
+    awaiting_approval while the approved run is opening its PR."""
+    if not state.auto_approve:
+        await runtime.context.recorder.status(state.run_id, "awaiting_approval",
+                                              approval_request=_review_payload(state))
+    return {"route": "approval"}
+
+
 async def approval(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     if state.auto_approve:
         decision = Approval(decision="approve", by="auto")
     else:
-        request = _review_payload(state)
-        # Stored on the run row for the API; idempotent when this node re-runs on resume.
-        await deps.recorder.status(state.run_id, "awaiting_approval", approval_request=request)
-        decision = Approval.model_validate(interrupt(request))
+        decision = Approval.model_validate(interrupt(_review_payload(state)))
     # Time spent waiting for the reviewer is not agent time: shift the clock's origin by it.
     paused = 0.0 if state.auto_approve else max(0.0, deps.clock() - state.validated_at)
     started_at = state.started_at + paused
@@ -282,10 +289,11 @@ def _review_payload(state: RunState) -> dict:
 
 async def record(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
+    # Event first: a stream ends once the status is terminal.
+    await deps.recorder.event(state.run_id, "record", state.status,
+                              {"failure_reason": state.failure_reason})
     await deps.recorder.status(
         state.run_id, state.status, failure_reason=state.failure_reason, pr_url=state.pr_url,
         retries=state.retries, usage=state.usage.model_dump(), result=_review_payload(state),
     )
-    await deps.recorder.event(state.run_id, "record", state.status,
-                              {"failure_reason": state.failure_reason})
     return {"route": "end"}

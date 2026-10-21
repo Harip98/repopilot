@@ -50,6 +50,8 @@ def _strip_root(member: tarfile.TarInfo, dest: str) -> tarfile.TarInfo | None:
     """GitHub tarballs wrap everything in one `owner-repo-sha/` directory: drop it, then apply
     the stdlib `data` filter (no absolute or `..` paths, no links out of the tree, no devices,
     no setuid)."""
+    if member.name.startswith("/"):
+        raise tarfile.AbsolutePathError(member)  # never stripped into a "relative" path
     _, _, rest = member.name.partition("/")
     if not rest:
         return None

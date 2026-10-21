@@ -6,6 +6,7 @@ questions phrased in the issue's words ("where are discounts applied?") rather t
 code's identifiers.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -98,11 +99,13 @@ class CodeIndex:
     async def search(self, key: str, query: str, k: int = 6) -> list[Hit]:
         [qvec] = await self._embedder.embed([query])
         async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
-            lexical = await (await conn.execute(
-                "SELECT id FROM code_chunks WHERE index_key = %s"
-                " AND tsv @@ websearch_to_tsquery('simple', %s)"
-                " ORDER BY ts_rank_cd(tsv, websearch_to_tsquery('simple', %s)) DESC LIMIT 30",
-                (key, query, query))).fetchall()
+            # OR of the query's words: questions are phrased in prose, and requiring every
+            # word (websearch_to_tsquery's AND) would leave the lexical half empty.
+            words = re.findall(r"[a-z0-9]+", query.lower())
+            lexical = [] if not words else await (await conn.execute(
+                "SELECT id FROM code_chunks WHERE index_key = %s AND tsv @@ to_tsquery('simple', %s)"
+                " ORDER BY ts_rank_cd(tsv, to_tsquery('simple', %s)) DESC LIMIT 30",
+                (key, " | ".join(words), " | ".join(words)))).fetchall()
             semantic = await (await conn.execute(
                 "SELECT id FROM code_chunks WHERE index_key = %s"
                 " ORDER BY embedding <=> %s::vector LIMIT 30", (key, _vector(qvec)))).fetchall()

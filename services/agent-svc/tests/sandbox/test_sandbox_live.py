@@ -2,6 +2,7 @@
 
 import io
 import os
+import subprocess
 import tarfile
 import time
 from pathlib import Path
@@ -199,10 +200,11 @@ async def test_destroy_removes_volume(repo: Path):
         sid = await client.create(IMAGE)
         await client.destroy(sid)
     env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
-    done = await anyio.run_process(
-        ["docker", "volume", "ls", "-q", "-f", f"name=rp-ws-{sid}"], env=env
-    )
-    assert done.stdout.decode().strip() == ""
+    # In a thread: the selector event loop used on Windows (for psycopg) has no subprocesses.
+    done = await anyio.to_thread.run_sync(lambda: subprocess.run(
+        ["docker", "volume", "ls", "-q", "-f", f"name=rp-ws-{sid}"], env=env,
+        capture_output=True, text=True, check=True))
+    assert done.stdout.strip() == ""
 
 
 def _tar(*members: tuple[tarfile.TarInfo, bytes]) -> bytes:

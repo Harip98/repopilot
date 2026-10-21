@@ -131,9 +131,10 @@ class SandboxClient:
         body: dict = {"argv": argv, "timeout_s": timeout_s}
         if cwd is not None:
             body["cwd"] = cwd
-        # The server may hold the request for timeout + kill grace + backstop; wait longer.
+        # The server may hold the request for the timeout plus its exec overhead (kill grace,
+        # backstop, cleanup, a possible reset: 3 minutes); wait a little longer.
         resp = await self._request(
-            "POST", f"/v1/sandboxes/{sandbox_id}/exec", json=body, timeout=timeout_s + 60.0
+            "POST", f"/v1/sandboxes/{sandbox_id}/exec", json=body, timeout=timeout_s + 200.0
         )
         return ExecResult.model_validate(resp.json())
 

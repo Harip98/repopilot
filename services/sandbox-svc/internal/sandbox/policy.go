@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"repopilot/sandbox-svc/internal/docker"
 )
@@ -39,7 +40,14 @@ const (
 	readCmd           = "rp-read"    // ditto: no-follow, unprivileged file reader
 	killGraceSeconds  = "5"          // timeout -k: SIGKILL this long after SIGTERM
 	workspaceTmpfsOpt = "size=512m,uid=10001,gid=10001,nodev,nosuid"
+
+	cleanupTimeout = 10 * time.Second // rp-killall after an exec (normally ~0.2 s; a bomb starves it)
+	resetTimeout   = 2 * time.Minute  // snapshot, restart and restore of a sandbox
 )
+
+// ExecOverhead bounds how long Exec can take beyond the command's own timeout: the kill
+// grace, the stream backstop, process cleanup and, when cleanup fails, a reset.
+const ExecOverhead = 3 * time.Minute
 
 // allowedCommands is defence in depth, not the boundary: the container is. It keeps the
 // tool surface narrow (no shells) and makes every exec easy to audit.

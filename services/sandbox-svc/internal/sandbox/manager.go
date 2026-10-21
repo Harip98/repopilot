@@ -323,7 +323,7 @@ func (m *Manager) Exec(ctx context.Context, id string, req ExecRequest) (ExecRes
 // cleanUp kills leftover processes; when that is impossible it resets the sandbox. The caller
 // holds the sandbox lock.
 func (m *Manager) cleanUp(id string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	res, err := m.e.Exec(ctx, containerName(id), []string{killAllCmd}, workspaceDir, 4096)
 	if err == nil && res.ExitCode == 0 {
@@ -339,7 +339,7 @@ func (m *Manager) cleanUp(id string) {
 // tmpfs workspace does not survive a restart, so it is snapshotted first through the archive
 // API, which runs in the daemon and needs no free process inside the sandbox.
 func (m *Manager) reset(id string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), resetTimeout)
 	defer cancel()
 	snap, err := os.CreateTemp("", "rp-reset-*.tar")
 	if err != nil {

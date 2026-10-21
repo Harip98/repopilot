@@ -171,8 +171,9 @@ func (h *handlers) exec(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "bad_request", "body must be an exec request")
 		return
 	}
-	// An exec may legitimately run far longer than the server-wide WriteTimeout.
-	limit := time.Duration(sandbox.ClampTimeout(req.TimeoutS))*time.Second + 30*time.Second
+	// An exec may legitimately run far longer than the server-wide WriteTimeout, including the
+	// cleanup or reset that follows it.
+	limit := time.Duration(sandbox.ClampTimeout(req.TimeoutS))*time.Second + sandbox.ExecOverhead
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(limit)); err != nil {
 		h.log.Warn("could not extend write deadline", "err", err)
 	}

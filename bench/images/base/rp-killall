@@ -1,10 +1,21 @@
-#!/usr/bin/env python3
+#!/usr/local/bin/python3 -IS
 """Kill every process in this sandbox except init (PID 1), the container's main process and
-this script. sandbox-svc runs it when an exec's output stream outlives its timeout (a
-background child holding stdout open), so the workspace survives without a restart."""
+this script. sandbox-svc runs it after every exec, so children that escaped the command's
+process group (a background job, a fork bomb) do not outlive it and the workspace survives
+without a restart.
+
+Listing /proc and then killing loses to a fork bomb: children forked in between survive. So
+everything is frozen first with one kill(-1, SIGSTOP), which the kernel delivers to every
+process at once (a stopped process cannot fork), then the frozen processes are killed and the
+main process is resumed. If anything still remains, exit 1: sandbox-svc then restarts the
+container, keeping the workspace. -IS keeps interpreter start-up short when a bomb is
+competing for the CPU."""
 
 import os
 import signal
+import sys
+
+PASSES = 3
 
 
 def parent_of(pid: int) -> int:
@@ -18,20 +29,47 @@ def parent_of(pid: int) -> int:
     return -1
 
 
-def main() -> None:
+def running(pid: int) -> bool:
+    """False for zombies (already dead, waiting for init to reap them) and vanished pids."""
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            return stat.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
+
+
+def pids() -> list[int]:
+    return sorted(int(p) for p in os.listdir("/proc") if p.isdigit() and running(int(p)))
+
+
+def main() -> int:
     me = os.getpid()
-    pids = sorted(int(p) for p in os.listdir("/proc") if p.isdigit())
     # The main process (`sleep infinity`) is init's first child, so it has the lowest PID of
     # init's children; orphans reparented to init later always have higher PIDs.
-    main_pid = next((p for p in pids if p != 1 and parent_of(p) == 1), None)
-    for pid in pids:
-        if pid in (1, me, main_pid):
-            continue
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    main_pid = next((p for p in pids() if p != 1 and parent_of(p) == 1), None)
+    keep = {1, me, main_pid}
+    try:
+        for _ in range(PASSES):
+            try:
+                os.kill(-1, signal.SIGSTOP)  # every process but init and this one, atomically
+            except ProcessLookupError:
+                return 0  # nothing else is running
+            targets = [p for p in pids() if p not in keep]
+            if not targets:
+                return 0
+            for pid in targets:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+        return 0 if not [p for p in pids() if p not in keep] else 1
+    finally:
+        if main_pid is not None:
+            try:
+                os.kill(main_pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

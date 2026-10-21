@@ -162,8 +162,10 @@ def write_report(name: str, results: list[EvalResult], meta: dict,
                  out_dir: Path = REPORTS_DIR) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.jsonl").write_text(
-        "".join(r.model_dump_json() + "\n" for r in results), encoding="utf-8")
-    (out_dir / f"{name}.meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        "".join(r.model_dump_json() + "\n" for r in results), encoding="utf-8", newline="\n")
+    (out_dir / f"{name}.meta.json").write_text(json.dumps(meta, indent=2) + "\n",
+                                               encoding="utf-8", newline="\n")
     md = out_dir / f"{name}.md"
-    md.write_text(render_markdown(name, meta, summarize(results), results), encoding="utf-8")
+    md.write_text(render_markdown(name, meta, summarize(results), results), encoding="utf-8",
+                  newline="\n")
     return md

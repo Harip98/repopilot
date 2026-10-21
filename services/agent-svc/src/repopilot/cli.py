@@ -290,6 +290,7 @@ def eval_run(
     model: str | None = typer.Option(None, help="Override REPOPILOT_LLM_MODEL."),
     task_id: Annotated[list[str] | None, typer.Option("--task", help="Only these task ids.")] = None,
     allow_unfrozen: bool = typer.Option(False, help="Run the test split even if it changed."),
+    max_seconds: float = typer.Option(1200.0, help="Per-task wall-clock budget (slow local GPUs need more)."),
 ) -> None:
     """Run the agent with auto-approval over a split and write eval/reports/<name>.*"""
     from repopilot.agent.pg_recorder import PgRecorder
@@ -307,7 +308,7 @@ def eval_run(
             typer.echo("the test split differs from its freeze:\n  " + "\n  ".join(problems), err=True)
             raise typer.Exit(1)
     settings = get_settings()
-    budget = Budget()
+    budget = Budget(max_seconds=max_seconds)
 
     async def run() -> None:
         dsn = settings.dsn()

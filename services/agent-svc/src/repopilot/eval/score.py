@@ -157,7 +157,7 @@ def render_markdown(name: str, meta: dict, summary: Summary, results: list[EvalR
         " · ".join(f"**{k}**: {v}" for k, v in meta.items()), "",
         "| Metric | Value |", "|---|---|",
         f"| Resolution rate | {_pct(s.resolution_rate)} ({s.resolved}/{s.n}) |",
-        f"| Resolution 95% CI | {ci.strip(' ()') or 'n/a'} |",
+        f"| Resolution 95% CI | {ci.strip(' ()').removeprefix('95% CI ') or 'n/a'} |",
         f"| Patch-apply rate | {_pct(s.patch_applied_rate)} |",
         f"| Visible-test pass rate | {_pct(s.visible_pass_rate)} (baseline {_pct(s.baseline_pass_rate)}) |",
         f"| Tool-call failure rate | {_pct(s.tool_failure_rate)} of {s.tool_calls} calls |",

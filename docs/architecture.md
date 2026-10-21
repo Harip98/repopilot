@@ -1,0 +1,183 @@
+# RepoPilot architecture
+
+RepoPilot is a tool-using agent that takes a software issue, investigates the repository,
+changes code inside a locked-down sandbox, proves the change with tests, and opens a draft pull
+request only after a person approves it. This document explains how the pieces fit and why they
+are built the way they are.
+
+## 1. Components
+
+```
+            ┌──────────────── web (Next.js) ────────────────┐
+            │  runs · run review (track, diff, tests) · evals │
+            └───────────────┬────────────────────────────────┘
+                            │ /api/rp/* (server-side proxy adds the bearer token)
+                            ▼
+ repopilot serve ──► FastAPI ── Postgres (runs, events, tool calls, evals, checkpoints)
+                        │  ▲
+                 XADD   │  │ SSE (polls run_events)
+                        ▼  │
+                 Redis Stream ──XREADGROUP──► repopilot worker (LangGraph agent)
+                                                 │         │            │
+                                       OpenAI-compatible   │ REST       │ REST (host only)
+                                       LLM (hosted/Ollama) ▼            ▼
+                                              sandbox-svc (Go)       GitHub API
+                                                 │ Docker socket
+                                                 ▼
+                                   one hardened container per run
+```
+
+| Component | Language | Job |
+|---|---|---|
+| `services/agent-svc` | Python 3.12 | Agent graph, tools, evaluation, API, worker, CLI, MCP server |
+| `services/sandbox-svc` | Go 1.25, stdlib only | The only process with the Docker socket; creates and drives sandboxes |
+| `web` | Next.js 15, TypeScript | Review console |
+| Postgres 16 + pgvector | | Runs and their timelines, eval results, LangGraph checkpoints, optional code index |
+| Redis 7 | | Durable job queue (Streams with a consumer group) |
+
+## 2. A run, step by step
+
+The agent is a LangGraph state machine. One node execution is one checkpointed step, so a run
+survives a crashed worker and resumes mid-investigation.
+
+```
+intake ─► llm ⇄ tools                     explore phase: read-only tools + submit_plan
+           │ └► nudge ─► llm               (replies without a tool call; 3 in a row fails the run)
+           │    tools ─finish─► validate ─pass─► approval ─approve─► open_pr ─► record ─► end
+           │                       │                 └─reject + comment (once)─► llm
+           │                       └─fail─► diagnose ─► llm   (at most max_retries)
+           └─budget exceeded─► fail ─► record
+```
+
+1. **intake** writes the system prompt and the issue, plus a two-level file listing so the model
+   starts from the real layout.
+2. **explore**: the model gets read-only tools (`read_file`, `list_dir`, `search_code`,
+   `git_log`, `git_diff`, optionally `find_code`) and must call `submit_plan` with a root cause,
+   the files it will change, acceptance criteria and test targets.
+3. **edit**: all tools, plus `finish`.
+4. **validate** is run by the harness and never trusts the model. It computes the full change
+   against `HEAD` (edits, new files, deletions, both sides of renames, and files hidden by
+   `.gitignore`), rejects the run if any protected path changed, runs the test command, and
+   re-checks the workspace after the tests, because test code can touch files too.
+5. **diagnose** hands the failing output back to the model, at most `max_retries` times.
+6. **approval** pauses with `interrupt()`. The review payload (diff, test output, plan, summary,
+   and whether the suite already passed before the change) is stored on the run row. A
+   rejection with a comment gets one revision.
+7. **open_pr** builds a draft PR for GitHub runs; benchmark runs have nowhere to push.
+8. **record** writes the final status, usage and result.
+
+**Budgets** cover model calls, tool calls, tokens and wall-clock seconds. They are checked before
+every model call and before every tool call inside a turn, so one reply asking for 60 tool
+calls cannot exceed the limit. Time spent waiting for the reviewer is not counted.
+
+## 3. Sandbox
+
+Every run gets one container from an allowlisted `repopilot-*` image, created by sandbox-svc:
+
+- `--network none`; uid/gid 10001; all capabilities dropped; `no-new-privileges`;
+- read-only root filesystem; `/workspace` is a 512 MB tmpfs mounted `nodev,nosuid`;
+- 1 CPU, 1 GiB memory without swap, 256 PIDs;
+- every command under `timeout` (default 120 s, at most 600 s), output capped at 64 KiB per
+  stream, and a stream-deadline backstop;
+- after every command, processes it left behind are killed; if not even that can start
+  (a fork bomb that escaped `timeout`), the container is restarted and the workspace restored
+  from a daemon-side snapshot;
+- sandboxes older than 2 h are reaped, including orphans from a crashed service.
+
+Files never cross the boundary through a shell. Uploads are rewritten before Docker sees them
+(regular files, directories and symlinks only; no paths outside `/workspace`; nothing written
+beneath a symlink; setuid bits cleared; parents emitted explicitly). Reads run inside the
+sandbox as the sandbox user and open every path component with `O_NOFOLLOW`.
+
+sandbox-svc holds the Docker socket, which is root-equivalent on the host. That is why it is
+small, has no third-party dependencies, listens on loopback, requires a token, and runs
+read-only with every capability dropped. Containers still share the host kernel; for untrusted
+public use the next step is gVisor or Firecracker at the container-create call.
+
+## 4. Tools and the write policy
+
+Ten tools, each a Pydantic-validated function that runs through sandbox-svc:
+
+| Read | Write | Execute |
+|---|---|---|
+| `read_file`, `list_dir`, `search_code`, `git_log`, `git_diff` (+ optional `find_code`) | `replace_text`, `create_file`, `apply_patch` | `run_tests`, `run_lint` |
+
+Dispatch never raises. Bad JSON, bad arguments, policy denials and sandbox errors all come back
+as a tool result the model can read and act on.
+
+`ToolPolicy` denies writes to `.git/` (at any depth), `.github/`, and each task's protected
+globs, which for the benchmark include held-out test names, `conftest.py` and pytest
+configuration. For `apply_patch`, the policy checks **the paths git itself reports**
+(`git apply --numstat -z`), because a naive header parser can be fooled by quoted names,
+non-`a/` prefixes, header-only, binary and renamed diffs. Every denial is recorded as an
+unauthorized modification attempt.
+
+## 5. Persistence
+
+- `runs`: one row per run, with status, outcome, usage and the review payload.
+- `run_events`: an ordered timeline. Sequence numbers are allocated under a row lock, so SSE
+  clients can resume with `Last-Event-ID`.
+- `tool_calls`: every tool call, with its arguments, outcome, denial flag and latency.
+- `eval_results`: one row per eval task.
+- LangGraph's own checkpoint tables, created by `AsyncPostgresSaver.setup()`.
+
+Migrations are numbered SQL files applied by a checksum-checked, advisory-locked runner.
+
+## 6. Service mode
+
+`POST /v1/runs` writes a `queued` row and enqueues a `start` job. Workers consume the Redis
+Stream with a consumer group; a job that is not acknowledged within the visibility timeout is
+reclaimed by another worker. Jobs are idempotent: a `start` job for a finished run does nothing,
+and a redelivered one continues from the run's last checkpoint. A job delivered more than three
+times marks the run failed.
+
+`POST /v1/runs/{id}/approval` claims the run atomically
+(`UPDATE … WHERE status = 'awaiting_approval' RETURNING`), so two concurrent decisions cannot
+both resume it, then enqueues a `resume` job.
+
+## 7. GitHub
+
+For a GitHub issue the worker downloads the default branch's tarball and extracts it with the
+standard library's `data` filter (no absolute or `..` paths, no links out of the tree, no
+devices, no setuid). It imports the tree as a single commit, reads `.repopilot.yml`
+(`test_command`, an allowlisted `image`, extra `protected_paths`) and starts the sandbox.
+
+After approval the change is rebuilt on GitHub with the Git Data API: blobs from the sandbox's
+file contents, a tree on the base commit's tree (deleted paths set to `null`), a commit, a
+`repopilot/<run>` branch and a **draft** pull request with `Fixes #N`. The GitHub token is used
+only on the host and never enters a sandbox.
+
+## 8. Observability
+
+OpenTelemetry spans are emitted per run invocation, per graph node, per model call (with GenAI
+semantic-convention attributes: model, input and output tokens, finish reason) and per tool
+call (outcome, denial, latency). Export is OTLP/HTTP: to Jaeger locally (`otel` compose profile)
+or to Langfuse, which reads the GenAI attributes as generations. Prompt text and tool output
+stay off spans unless explicitly enabled. Each run row stores its trace id. Structured run
+events in Postgres remain the source of truth for the UI.
+
+## 9. Evaluation
+
+Benchmark tasks are bugs injected into small, realistic fixture repos. Each task has an issue
+written the way a user would report it, a reference fix, and **held-out tests the agent never
+sees**. `repopilot bench validate` proves every task is sound: the bug applies, the held-out
+tests fail on it, and the reference fix makes them pass.
+
+Workspaces are a single import commit with the bug already present, so the fix cannot be read
+from `.git`. Scoring copies a pristine `tests/conftest.py` over the agent's before running the
+held-out tests, so a planted pytest hook cannot force a pass.
+
+A task is **resolved** when the run passed harness validation *and* the held-out tests pass.
+Evals are resumable and write JSONL, Markdown and metadata reports. Rates carry 95% Wilson
+intervals. The test split is frozen by per-task hashes; tuning happens on the dev split only.
+
+## 10. Known limits
+
+- The fixture repos are small, and each bug is fixed in one or two files.
+- Every task's visible tests pass on the buggy code, so the agent has to reproduce the problem
+  from the issue. The UI and the PR body say so whenever a green suite is weak evidence.
+- GitHub runs have no network inside the sandbox, so dependencies must be baked into a
+  `repopilot-*` image named in `.repopilot.yml`.
+- Metrics are counted per checkpointed step: if a worker dies in the middle of a step, that
+  step's tool calls may be counted twice.
+- Ollama reports prompt tokens without the cached prefix, so local token totals are low.

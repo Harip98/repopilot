@@ -172,3 +172,18 @@ Each milestone gets its own detailed plan in `docs/plans/YYYY-MM-DD-mN-*.md` (wr
   5. Check that the run, tool calls and trace are in Postgres and Langfuse.
 - **Eval:** run `repopilot eval run --split test` to produce the metrics report. Its headline numbers go into the README unedited.
 - **UI:** drive the run-detail and approval flow in the browser, using the run skill or Chrome tools.
+
+## Status (2026-10-21)
+
+| Milestone | State |
+|---|---|
+| M0 Scaffold | ✅ merged; reviewed |
+| M1 Sandbox | ✅ merged; reviewed (3 Important fixed: tar breakout, symlinked-dir reads, escaped fork bombs) |
+| M2 Tools, LLM, first benchmark | ✅ merged; reviewed (1 Critical fixed: patch policy bypass) |
+| M3 LangGraph agent | ✅ merged; reviewed (1 Critical fixed: deletions hidden from validation) |
+| M4 Eval harness + 25 tasks | 🟡 built on `m4-eval`; dev v1 measured (4/15); dev v2, frozen test split and baseline pending; review pending |
+| M5 Service (API, queue, worker, GitHub PRs) | 🟡 coded on `m5-service`; queue/worker tests pass; API/GitHub tests written, not yet run |
+| M6 Observability | 🟡 coded; tests written, not yet run |
+| M7 Web console | 🟡 coded; not yet installed/type-checked |
+| M8 MCP server, hybrid code index | 🟡 coded; tests written, not yet run |
+| M9 Ship (README, architecture, AWS, demo) | 🟡 docs written; demo GIF and final results pending |

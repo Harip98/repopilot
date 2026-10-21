@@ -4,7 +4,7 @@ An AI software engineering agent that takes an issue, investigates the repositor
 code inside a locked-down sandbox, proves the fix with tests, and opens a **draft pull request
 only after a person approves it**. Every step is checkpointed, recorded and measurable.
 
-<!-- Demo: docs/demo.gif (recorded run: issue → plan → diff → tests → approval) -->
+![A run in the review console: started from the runs list, paused with its diagnosis, diff and test run, approved, then graded by hidden tests](docs/demo.gif)
 
 RepoPilot is about **model-directed tool orchestration done safely**. Its companion project,
 ind-agent, is about evidence-grounded, deterministic AI.
@@ -86,6 +86,7 @@ validated: its hidden tests fail on the bug and pass with the reference fix.
 | Run | Model | Resolved | 95% CI | Tool-call failures | Median time | Notes |
 |---|---|---|---|---|---|---|
 | dev v1 | qwen2.5 7B (local, Ollama) | 4 / 15 (26.7%) | 11–52% | 3.3% of 122 | 185 s | Before tuning: 6 runs ended on unparseable tool calls. The laptop slept during orders-api-006, so its 23,049 s (the p95 in the report) and its time-budget failure are not agent behaviour |
+| dev v2 | qwen2.5 7B (local, Ollama) | 5 / 15 (33.3%) | 15–58% | 12.7% of 166 | 311 s | After tuning (consecutive nudges, 2400 s budget). Still 6 runs lost to tool calls Ollama could not parse: the model emitted ~200 tokens of call that came back empty |
 
 Each eval writes its full report, with per-task outcomes, failure reasons, token use and policy
 denials, to [`eval/reports/`](eval/reports/).

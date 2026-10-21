@@ -494,3 +494,17 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
                 await github.aclose()
 
     run_async(run)
+
+
+@app.command("mcp")
+def mcp_command() -> None:
+    """Serve RepoPilot's sandboxed tools over MCP (stdio), e.g. for Claude Code."""
+    from repopilot.agent.runner import run_async
+    from repopilot.mcp_server import WorkspaceTools, serve_stdio
+    from repopilot.sandbox_client import get_sandbox_client
+
+    async def run() -> None:
+        async with get_sandbox_client() as sandbox:
+            await serve_stdio(WorkspaceTools(sandbox))
+
+    run_async(run)

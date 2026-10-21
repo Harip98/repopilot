@@ -121,9 +121,10 @@ def _deps(sandbox, recorder, model: str | None, code_search=None):
 
 
 def _code_index_hooks(enabled: bool, run_id: str):
-    """(code_search, on_workspace) for a run with the hybrid code index, or (None, None)."""
+    """(code_search, on_workspace, drop) for a run with the hybrid code index, or Nones. Call
+    drop once the run is over: the index is per run and goes stale after the agent's edits."""
     if not enabled:
-        return None, None
+        return None, None, None
     from repopilot.code_index import CodeIndex
     from repopilot.config import get_settings
     from repopilot.llm.embeddings import OpenAICompatEmbedder
@@ -138,7 +139,10 @@ def _code_index_hooks(enabled: bool, run_id: str):
     async def build(workspace) -> None:
         await index.index(run_id, workspace)
 
-    return search, build
+    async def drop() -> None:
+        await index.drop(run_id)
+
+    return search, build, drop
 
 
 def _report(result, run_id: str) -> None:
@@ -193,11 +197,15 @@ def solve(
         try:
             async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
                 run_id = new_run_id()
-                search, build = _code_index_hooks(code_index, run_id)
+                search, build, drop = _code_index_hooks(code_index, run_id)
                 deps = _deps(sandbox, recorder, model, search)
                 typer.echo(f"run {run_id} ({task.id}, model {deps.llm.model})")
-                outcome = await run_bench_task(task, deps, saver, run_id=run_id,
-                                               auto_approve=auto_approve, on_workspace=build)
+                try:
+                    outcome = await run_bench_task(task, deps, saver, run_id=run_id,
+                                                   auto_approve=auto_approve, on_workspace=build)
+                finally:
+                    if drop:
+                        await drop()
                 _report(outcome.result, run_id)
                 _report_grade(outcome.graded)
         finally:
@@ -370,11 +378,15 @@ def eval_run(
                 model_name = _deps(sandbox, recorder, model).llm.model
 
                 async def run_task(task, run_id):
-                    search, build = _code_index_hooks(code_index, run_id)
+                    search, build, drop = _code_index_hooks(code_index, run_id)
                     deps = _deps(sandbox, recorder, model, search)
-                    return await run_bench_task(task, deps, saver, run_id=run_id,
-                                                auto_approve=True, budget=budget,
-                                                on_workspace=build)
+                    try:
+                        return await run_bench_task(task, deps, saver, run_id=run_id,
+                                                    auto_approve=True, budget=budget,
+                                                    on_workspace=build)
+                    finally:
+                        if drop:
+                            await drop()
 
                 def progress(r) -> None:
                     typer.echo(f"{r.task_id:<16} {'RESOLVED' if r.resolved else 'unresolved':<11}"

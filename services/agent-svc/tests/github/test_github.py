@@ -10,7 +10,7 @@ import pytest
 
 from repopilot.agent.state import Approval, GitHubTarget, Plan, RunState, TestReport
 from repopilot.github.client import GitHubClient
-from repopilot.github.pr import GitHubPR
+from repopilot.github.pr import GitHubPR, PRError
 from repopilot.github.workspace import (
     RepoConfig,
     WorkspaceError,
@@ -200,7 +200,8 @@ def _approved_state(**kw) -> RunState:
 
 async def test_open_draft_pr_calls_git_data_api_in_order():
     fake = GitHubFake()
-    sandbox = SandboxSpy({"app/pricing.py": b"fixed\n"}, name_status="M\x00app/pricing.py\x00")
+    sandbox = RawSandboxSpy({"app/pricing.py": b"fixed\n"},
+                            _raw(("100644", "100644", "M", ["app/pricing.py"])))
     url = await GitHubPR(_client(fake), sandbox).open(_approved_state())
     assert url == "https://github.com/acme/shop/pull/8"
     writes = [(m, p) for m, p, _ in fake.calls if m == "POST"]
@@ -218,8 +219,9 @@ async def test_open_draft_pr_calls_git_data_api_in_order():
 
 async def test_pr_tree_includes_deletions():
     fake = GitHubFake()
-    sandbox = SandboxSpy({"app/new.py": b"n\n"},
-                         name_status="D\x00app/gone.py\x00R100\x00app/old.py\x00app/new.py\x00")
+    sandbox = RawSandboxSpy({"app/new.py": b"n\n"}, _raw(
+        ("100644", "000000", "D", ["app/gone.py"]),
+        ("100644", "100644", "R100", ["app/old.py", "app/new.py"])))
     await GitHubPR(_client(fake), sandbox).open(_approved_state())
     tree = next(b for m, p, b in fake.calls if p.endswith("/git/trees"))["tree"]
     by_path = {e["path"]: e["sha"] for e in tree}
@@ -247,3 +249,63 @@ def test_repo_config_cannot_pick_the_agent_image(tmp_path: Path):
     (tmp_path / ".repopilot.yml").write_text("image: repopilot-agent-svc\n")
     with pytest.raises(WorkspaceError):
         load_repo_config(tmp_path)
+
+
+def _raw(*entries: tuple[str, str, str, list[str]]) -> str:
+    """`git diff --raw -z` lines: (old mode, new mode, status, paths)."""
+    return "".join(f":{old} {new} {'1' * 40} {'0' * 40} {status}\x00" + "".join(p + "\x00" for p in paths)
+                   for old, new, status, paths in entries)
+
+
+class RawSandboxSpy(SandboxSpy):
+    def __init__(self, files, raw: str):
+        super().__init__(files)
+        self.raw = raw
+
+    async def exec(self, sandbox_id, argv, timeout_s=120, cwd=None) -> ExecResult:
+        self.seen.append(" ".join(argv))
+        return _ok(self.raw if "--raw" in argv else "")
+
+
+async def test_pr_tree_keeps_file_modes():
+    fake = GitHubFake()
+    sandbox = RawSandboxSpy({"run.sh": b"#!/bin/sh\n", "app/x.py": b"x\n"}, _raw(
+        ("100644", "100755", "M", ["run.sh"]), ("000000", "100644", "A", ["app/x.py"])))
+    await GitHubPR(_client(fake), sandbox).open(_approved_state())
+    tree = next(b for m, p, b in fake.calls if p.endswith("/git/trees"))["tree"]
+    assert {e["path"]: e["mode"] for e in tree} == {"run.sh": "100755", "app/x.py": "100644"}
+
+
+async def test_pr_refuses_symlinks_and_submodules():
+    for mode in ("120000", "160000"):
+        sandbox = RawSandboxSpy({}, _raw(("000000", mode, "A", ["link"])))
+        with pytest.raises(PRError, match="link"):
+            await GitHubPR(_client(GitHubFake()), sandbox).open(_approved_state())
+
+
+async def test_reopening_after_a_partial_failure_reuses_branch_and_pr():
+    class Retried(GitHubFake):
+        def __call__(self, request):
+            path = request.url.path
+            if request.method == "POST" and path == "/repos/acme/shop/git/refs":
+                self.calls.append((request.method, path, json.loads(request.content)))
+                return httpx.Response(422, json={"message": "Reference already exists"})
+            if request.method == "PATCH" and path == "/repos/acme/shop/git/refs/heads/repopilot/abcdef12":
+                self.calls.append((request.method, path, json.loads(request.content)))
+                return httpx.Response(200, json={})
+            if request.method == "POST" and path == "/repos/acme/shop/pulls":
+                self.calls.append((request.method, path, None))
+                return httpx.Response(422, json={"message": "A pull request already exists"})
+            if request.method == "GET" and path == "/repos/acme/shop/pulls":
+                self.calls.append((request.method, path, dict(request.url.params)))
+                return httpx.Response(200, json=[{"html_url": "https://github.com/acme/shop/pull/8"}])
+            return super().__call__(request)
+
+    fake = Retried()
+    sandbox = RawSandboxSpy({"app/pricing.py": b"fixed\n"}, _raw(("100644", "100644", "M", ["app/pricing.py"])))
+    url = await GitHubPR(_client(fake), sandbox).open(_approved_state())
+    assert url == "https://github.com/acme/shop/pull/8"
+    patch = next(b for m, p, b in fake.calls if m == "PATCH")
+    assert patch == {"sha": "newcommit", "force": True}
+    query = next(b for m, p, b in fake.calls if m == "GET" and p.endswith("/pulls"))
+    assert query["head"] == "acme:repopilot/abcdef12"

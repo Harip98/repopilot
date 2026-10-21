@@ -10,6 +10,10 @@ class PullRequestOpener(Protocol):
         """Open a draft PR for the approved change; returns its URL, or None if not applicable."""
 
 
+class PRError(RuntimeError):
+    """The approved change cannot be turned into a pull request automatically."""
+
+
 class NoPR:
     async def open(self, state: RunState) -> str | None:
         return None

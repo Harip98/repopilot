@@ -11,7 +11,7 @@ from datetime import datetime
 
 import anyio
 
-from repopilot.api.repo import TERMINAL, RunsRepo
+from repopilot.api.repo import TERMINAL, EventSession
 
 
 def _default(value):
@@ -26,7 +26,7 @@ def format_event(row: dict) -> str:
     return f"id: {row['seq']}\nevent: {row['node']}.{row['kind']}\ndata: {data}\n\n"
 
 
-async def run_events(repo: RunsRepo, run_id: str, after_seq: int, *, poll_s: float = 1.0,
+async def run_events(repo: EventSession, run_id: str, after_seq: int, *, poll_s: float = 1.0,
                      keepalive_s: float = 15.0, settle_s: float = 10.0) -> AsyncIterator[str]:
     """Stream events until the run is terminal and no event has arrived for `settle_s`: some
     are written after the final status (the held-out grade, after the graph has returned)."""

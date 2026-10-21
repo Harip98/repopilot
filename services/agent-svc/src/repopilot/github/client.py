@@ -75,6 +75,17 @@ class GitHubClient:
     async def create_ref(self, repo: str, ref: str, sha: str) -> None:
         await self._req("POST", f"/repos/{repo}/git/refs", json={"ref": ref, "sha": sha})
 
+    async def update_ref(self, repo: str, ref: str, sha: str) -> None:
+        """Force-move `ref` (e.g. "heads/repopilot/abc") to `sha`."""
+        await self._req("PATCH", f"/repos/{repo}/git/refs/{ref}", json={"sha": sha, "force": True})
+
+    async def find_pull(self, repo: str, branch: str) -> str | None:
+        """The open pull request from `branch` of the same repository, if any."""
+        owner = repo.split("/", 1)[0]
+        pulls = (await self._req("GET", f"/repos/{repo}/pulls",
+                                 params={"head": f"{owner}:{branch}", "state": "open"})).json()
+        return pulls[0]["html_url"] if pulls else None
+
     async def create_pull(self, repo: str, *, title: str, head: str, base: str, body: str) -> str:
         data = {"title": title, "head": head, "base": base, "body": body, "draft": True}
         return (await self._req("POST", f"/repos/{repo}/pulls", json=data)).json()["html_url"]

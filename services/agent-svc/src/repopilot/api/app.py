@@ -208,10 +208,15 @@ def create_app(services: ApiServices) -> FastAPI:
                      after: int = Query(0, ge=0)) -> StreamingResponse:
         await _run_or_404(run_id)
         start = int(last_event_id) if last_event_id and last_event_id.isdigit() else after
-        return StreamingResponse(
-            run_events(services.repo, run_id, start, poll_s=services.poll_s,
-                       settle_s=services.settle_s),
-            media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
+        async def stream():
+            async with services.repo.event_session() as session:
+                async for chunk in run_events(session, run_id, start, poll_s=services.poll_s,
+                                              settle_s=services.settle_s):
+                    yield chunk
+
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"X-Accel-Buffering": "no"})
 
     @app.post("/v1/runs/{run_id}/approval", status_code=202, dependencies=auth)
     async def approval(run_id: str, body: Decision) -> dict:

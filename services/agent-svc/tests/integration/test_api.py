@@ -230,3 +230,23 @@ async def test_api_docs_are_not_public(api):
     client, _, _ = api
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert (await client.get(path)).status_code == 404, path
+
+
+async def test_run_detail_exposes_trace_id_and_rejects_malformed_ids(api):
+    client, _, conn = api
+    run_id = _run(conn, "completed")
+    conn.execute("UPDATE runs SET trace_id = %s WHERE id = %s", ("ab" * 16, run_id))
+    assert (await client.get(f"/v1/runs/{run_id}", headers=AUTH)).json()["trace_id"] == "ab" * 16
+    for bad in ("not-a-uuid", "1' OR '1'='1"):
+        assert (await client.get(f"/v1/runs/{bad}", headers=AUTH)).status_code == 404
+        assert (await client.get(f"/v1/runs/{bad}/events", headers=AUTH)).status_code == 404
+
+
+def test_event_poll_uses_the_run_index(conn):
+    from repopilot.api.repo import EVENTS_SQL
+
+    conn.execute("SET enable_seqscan = off")
+    plan = "\n".join(r[0] for r in conn.execute(
+        "EXPLAIN " + EVENTS_SQL, (uuid.uuid4(), 0, 200)).fetchall())
+    assert "run_events_run_id_seq_key" in plan or "Index" in plan, plan
+    assert "::text" not in plan, plan

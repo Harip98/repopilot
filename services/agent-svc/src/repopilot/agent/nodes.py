@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from repopilot import telemetry
 from repopilot.agent.control import CONTROL_TOOLS, allowed_tool_names, tools_for
 from repopilot.agent.deps import RunDeps
+from repopilot.agent.pr import PRError
 from repopilot.agent.prompts import issue_message, system_prompt
 from repopilot.agent.state import Approval, Plan, RunState, TestReport, budget_exceeded
 from repopilot.llm.types import ToolCall, cost_usd
@@ -266,7 +267,10 @@ async def approval(state: RunState, runtime: Runtime[RunDeps]) -> dict:
 
 
 async def open_pr(state: RunState, runtime: Runtime[RunDeps]) -> dict:
-    url = await runtime.context.pr.open(state)
+    try:
+        url = await runtime.context.pr.open(state)
+    except PRError as exc:
+        return {"status": "failed", "failure_reason": f"pr_error: {exc}"[:300], "route": "record"}
     return {"pr_url": url, "status": "pr_opened" if url else "completed", "route": "record"}
 
 

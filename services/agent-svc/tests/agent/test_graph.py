@@ -371,3 +371,20 @@ async def test_resuming_does_not_reopen_the_review():
     await h.resume({"decision": "approve", "by": "alice"})
     after = [s for s, _ in h.recorder.statuses[paused_at:]]
     assert "awaiting_approval" not in after and after[-1] == "completed"
+
+
+async def test_pr_that_cannot_be_built_fails_the_run_with_a_reason():
+    from repopilot.agent.pr import PRError
+
+    class Refusing:
+        async def open(self, state):
+            raise PRError("the change adds symlinks or submodules (link)")
+
+    h = Harness()
+    deps = h.deps(explore_and_edit())
+    deps.pr = Refusing()
+    out = await h.graph.ainvoke(make_state(auto_approve=True),
+                                {"configurable": {"thread_id": "run-1"}}, context=deps)
+    final = RunState.model_validate(out)
+    assert final.status == "failed" and final.failure_reason.startswith("pr_error: ")
+    assert h.recorder.statuses[-1][0] == "failed"

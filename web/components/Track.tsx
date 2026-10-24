@@ -95,7 +95,7 @@ export function Track({ stops, live }: { stops: Stop[]; live: boolean }) {
                   {stop.calls.map((c, i) => (
                     <span
                       key={`${c.step}-${c.tool}-${i}`}
-                      className={`call ${c.denied ? "denied" : c.ok ? "" : "failed"}`}
+                      className={`call ${c.denied ? "denied" : c.refused ? "refused" : c.ok ? "" : "failed"}`}
                       title={c.error ?? JSON.stringify(c.args)}
                     >
                       {c.tool}

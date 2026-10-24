@@ -159,6 +159,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .call { font-family: var(--font-code); font-size: 0.75rem; padding: 0.05rem 0.4rem; border-radius: 3px; background: var(--hunk-bg); }
 .call.failed { background: var(--del-bg); }
 .call.denied { background: var(--fail); color: var(--sheet); }
+.call.refused { text-decoration: line-through; opacity: 0.6; }
 .phase-legend { display: flex; gap: 1rem; color: var(--graphite); font-size: var(--t-sm); margin-top: 0.5rem; }
 
 /* Diff */
@@ -184,7 +185,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .decision textarea { width: 100%; min-height: 4rem; resize: vertical; }
 
 /* Forms */
-.new-run { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1.5rem 0 2.5rem; }
+.new-run { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin: 1.5rem 0 2.5rem; }
 .new-run label { display: grid; gap: 0.25rem; color: var(--graphite); font-size: var(--t-sm); }
 .new-run .check { display: flex; align-items: center; gap: 0.4rem; color: var(--ink); font-size: var(--t-base); }
 

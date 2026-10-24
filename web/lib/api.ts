@@ -2,7 +2,7 @@
 
 export type RunStatus =
   | "queued" | "running" | "awaiting_approval" | "approved" | "rejected"
-  | "pr_opened" | "completed" | "failed" | "cancelled";
+  | "pr_opened" | "completed" | "failed";
 
 export interface Plan {
   root_cause: string;
@@ -64,6 +64,8 @@ export interface ToolCallRow {
   args: Record<string, unknown>;
   ok: boolean;
   denied: boolean;
+  /** Requested but not run (not offered in this phase, unknown, or over budget). */
+  refused?: boolean;
   error: string | null;
   result_excerpt: string | null;
   latency_ms: number;
@@ -126,7 +128,7 @@ export const api = {
     call<{ name: string; summary: EvalSummary; results: EvalRow[] }>(`evals/${encodeURIComponent(name)}`),
 };
 
-export const TERMINAL: RunStatus[] = ["completed", "pr_opened", "rejected", "failed", "cancelled"];
+export const TERMINAL: RunStatus[] = ["completed", "pr_opened", "rejected", "failed"];
 
 export function pct(v: number | null | undefined): string {
   return v == null ? "n/a" : `${(v * 100).toFixed(1)}%`;

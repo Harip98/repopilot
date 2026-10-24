@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Sans_Condensed } from "next/font/google";
+import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import "./globals.css";
 
@@ -18,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="shell">
           <header className="masthead">
-            <a className="wordmark" href="/">RepoPilot</a>
+            <Link className="wordmark" href="/">RepoPilot</Link>
             <Nav />
           </header>
           <main className="page">{children}</main>

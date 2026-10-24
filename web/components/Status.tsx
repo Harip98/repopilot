@@ -9,7 +9,6 @@ const LABELS: Record<RunStatus, string> = {
   pr_opened: "Draft PR opened",
   completed: "Completed",
   failed: "Failed",
-  cancelled: "Cancelled",
 };
 
 const TONE: Partial<Record<RunStatus, string>> = {

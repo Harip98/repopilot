@@ -1,0 +1,5 @@
+# qwen2.5-3b-16k: the local baseline model behind the README results (test, baseline).
+#   ollama pull qwen2.5:3b-instruct
+#   ollama create qwen2.5-3b-16k -f deploy/ollama/qwen2.5-3b-16k.Modelfile
+FROM qwen2.5:3b-instruct
+PARAMETER num_ctx 16384

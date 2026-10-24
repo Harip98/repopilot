@@ -1,0 +1,6 @@
+# qwen2.5-7b-16k: the local model behind the README results (dev v1/v2, test).
+#   ollama pull qwen2.5:7b-instruct
+#   ollama create qwen2.5-7b-16k -f deploy/ollama/qwen2.5-7b-16k.Modelfile
+FROM qwen2.5:7b-instruct
+PARAMETER num_ctx 16384
+PARAMETER temperature 0

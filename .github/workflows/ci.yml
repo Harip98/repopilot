@@ -14,10 +14,11 @@ jobs:
       run:
         working-directory: services/agent-svc
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2  # setup-uv publishes no floating major tags
       - run: uv sync --locked
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
       - run: uv run pytest
 
   python-integration:
@@ -45,8 +46,8 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
       - run: uv sync --locked
       - run: uv run pytest -m integration
 
@@ -56,20 +57,26 @@ jobs:
       run:
         working-directory: services/sandbox-svc
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      # Test on the Go release the image is built with: the tag of the Dockerfile's build stage.
+      - id: go
+        run: |
+          version=$(sed -nE 's/^FROM golang:([0-9.]+)-.*/\1/p' Dockerfile)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
         with:
-          go-version-file: services/sandbox-svc/go.mod
+          go-version: ${{ steps.go.outputs.version }}
           cache: false  # no go.sum yet: the module has no dependencies
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race ./...  # the runner has gcc, which the race detector needs
 
   sandbox:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
       # End-to-end sandbox tests also checkpoint and record runs in Postgres.
       - run: docker compose up -d --build --wait postgres redis sandbox-svc
       - run: uv sync --locked
@@ -81,18 +88,30 @@ jobs:
       - if: failure()
         run: docker compose logs sandbox-svc
 
+  # The images the compose `app` profile and the AWS user data build.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -f services/agent-svc/Dockerfile -t repopilot-agent-svc .
+      - run: docker run --rm repopilot-agent-svc repopilot version
+      - run: docker build -t repopilot-sandbox-svc services/sandbox-svc
+
   web:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high

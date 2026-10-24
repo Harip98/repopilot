@@ -1,0 +1,26 @@
+# Weekly update PRs. bench/images is left out on purpose: the frozen test split's hashes
+# (bench/test_split.sha256) cover those Dockerfiles, so changing them invalidates the freeze.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /services/agent-svc
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /services/sandbox-svc
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories:
+      - /services/agent-svc
+      - /services/sandbox-svc
+    schedule:
+      interval: weekly

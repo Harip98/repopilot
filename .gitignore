@@ -11,8 +11,11 @@ dist/
 node_modules/
 .next/
 
-# Local
+# Local settings and secrets (.env, web/.env.local, ...; web.env is the AWS console env)
 .env
+.env.*
+!.env.example
+web.env
 data/
 .superpowers/
 .venv-dev/

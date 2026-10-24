@@ -5,15 +5,16 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: repopilot
+      # Read when the data volume is first created; later changes need a fresh volume.
+      POSTGRES_USER: ${REPOPILOT_PG_USER:-repopilot}
       POSTGRES_PASSWORD: ${REPOPILOT_PG_PASSWORD:-repopilot_dev_pw}
-      POSTGRES_DB: repopilot
+      POSTGRES_DB: ${REPOPILOT_PG_DB:-repopilot}
     ports:
       - "127.0.0.1:5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U repopilot -d repopilot"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -61,19 +62,34 @@ services:
     image: repopilot-agent-svc
     # Listens on all interfaces inside the container but is published on loopback only.
     command: ["repopilot", "serve", "--host", "0.0.0.0", "--port", "8000", "--allow-default-token"]
+    # The image has no .env, so the containers see only what is listed here: every setting in
+    # .env.example, with config.py's defaults when .env does not set it.
     environment: &agent-env
+      # Fixed: the compose services, not the host addresses in .env.
       REPOPILOT_PG_HOST: postgres
       REPOPILOT_PG_PORT: "5432"
-      REPOPILOT_PG_PASSWORD: ${REPOPILOT_PG_PASSWORD:-repopilot_dev_pw}
       REPOPILOT_REDIS_URL: redis://redis:6379/0
       REPOPILOT_SANDBOX_URL: http://sandbox-svc:8090
+      REPOPILOT_PG_DB: ${REPOPILOT_PG_DB:-repopilot}
+      REPOPILOT_PG_USER: ${REPOPILOT_PG_USER:-repopilot}
+      REPOPILOT_PG_PASSWORD: ${REPOPILOT_PG_PASSWORD:-repopilot_dev_pw}
       REPOPILOT_SANDBOX_TOKEN: ${REPOPILOT_SANDBOX_TOKEN:-dev-sandbox-token-change-me}
       REPOPILOT_API_TOKEN: ${REPOPILOT_API_TOKEN:-dev-api-token-change-me}
       REPOPILOT_UI_ORIGIN: ${REPOPILOT_UI_ORIGIN:-http://127.0.0.1:3000}
-      REPOPILOT_LLM_BASE_URL: ${REPOPILOT_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
-      REPOPILOT_LLM_MODEL: ${REPOPILOT_LLM_MODEL:-qwen2.5-7b-16k}
+      REPOPILOT_JOB_VISIBILITY_S: ${REPOPILOT_JOB_VISIBILITY_S:-1800}
+      # An Ollama on the host is http://host.docker.internal:11434/v1 from here.
+      REPOPILOT_LLM_BASE_URL: ${REPOPILOT_LLM_BASE_URL:-https://api.openai.com/v1}
+      REPOPILOT_LLM_MODEL: ${REPOPILOT_LLM_MODEL:-gpt-4.1-mini}
       REPOPILOT_LLM_API_KEY: ${REPOPILOT_LLM_API_KEY:-}
+      REPOPILOT_LLM_TIMEOUT_S: ${REPOPILOT_LLM_TIMEOUT_S:-120}
+      REPOPILOT_LLM_PRICE_IN: ${REPOPILOT_LLM_PRICE_IN:-0}
+      REPOPILOT_LLM_PRICE_OUT: ${REPOPILOT_LLM_PRICE_OUT:-0}
       REPOPILOT_GITHUB_TOKEN: ${REPOPILOT_GITHUB_TOKEN:-}
+      REPOPILOT_GITHUB_API_URL: ${REPOPILOT_GITHUB_API_URL:-https://api.github.com}
+      REPOPILOT_EMBED_MODEL: ${REPOPILOT_EMBED_MODEL:-nomic-embed-text}
+      REPOPILOT_EMBED_BASE_URL: ${REPOPILOT_EMBED_BASE_URL:-}
+      REPOPILOT_CODE_INDEX: ${REPOPILOT_CODE_INDEX:-false}
+      REPOPILOT_MCP_ROOTS: ${REPOPILOT_MCP_ROOTS:-}
       # Tracing (off unless an endpoint is set): the otel profile's Jaeger is
       # http://jaeger:4318; Langfuse takes its OTLP endpoint plus the two keys.
       REPOPILOT_OTEL_ENDPOINT: ${REPOPILOT_OTEL_ENDPOINT:-}

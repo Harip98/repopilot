@@ -1,6 +1,6 @@
 # M2 Tools, LLM Layer and First Benchmark Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> The plan as written before implementation, kept as design history; its checkboxes were not used for tracking. [README.md](../../README.md) and [architecture.md](../architecture.md) describe the system as built.
 
 **Goal:** Build everything the agent loop in M3 consumes:
 - an OpenAI-compatible chat client with token and cost accounting, plus a scripted fake

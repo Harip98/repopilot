@@ -1,6 +1,6 @@
 # M3 LangGraph Agent Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> The plan as written before implementation, kept as design history; its checkboxes were not used for tracking. [README.md](../../README.md) and [architecture.md](../architecture.md) describe the system as built.
 
 **Goal:** Build the agent itself, a LangGraph state machine. It:
 - investigates an issue with read-only tools and submits a plan
@@ -187,4 +187,4 @@ Steps:
 
 ### Task 5: Live smoke run with a real model
 
-- [ ] With Ollama running (`REPOPILOT_LLM_BASE_URL=http://127.0.0.1:11434/v1`, `REPOPILOT_LLM_MODEL=qwen2.5:7b-instruct`), run `repopilot solve --task orders-api-005 --auto-approve`. Record the outcome, tokens and time in the ledger. A failed solve is a finding, not a blocker; M4 measures properly.
+- [ ] With Ollama running (`REPOPILOT_LLM_BASE_URL=http://127.0.0.1:11434/v1`, `REPOPILOT_LLM_MODEL=qwen2.5:7b-instruct`), run `repopilot solve --task orders-api-005 --auto-approve`. Note the outcome, tokens and time. A failed solve is a finding, not a blocker; M4 measures properly.

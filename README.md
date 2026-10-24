@@ -1,242 +1,258 @@
 # RepoPilot
 
 An AI software engineering agent that takes an issue, investigates the repository, fixes the
-code inside a locked-down sandbox, proves the fix with tests, and opens a **draft pull request
-only after a person approves it**. Every step is checkpointed, recorded and measurable.
+code inside a locked-down sandbox, proves the fix with tests, and opens a draft pull request
+**only after a person approves it**. Every step is checkpointed, recorded and measurable.
 
-![A run in the review console: started from the runs list, paused with its diagnosis, diff and test run, approved, then graded by hidden tests](docs/demo.gif)
+[![CI](https://github.com/Harip98/repopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Harip98/repopilot/actions/workflows/ci.yml)
+![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
+![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-RepoPilot is about **model-directed tool orchestration done safely**. Its companion project,
-ind-agent, is about evidence-grounded, deterministic AI.
-The goal here is not to beat commercial coding agents. It is to show:
+![A real run in the review console: started from the runs list, the agent's path growing live, paused with its diagnosis, diff and test run, approved, graded by hidden tests, then the evaluations page](docs/demo.gif)
+
+RepoPilot is about **model-directed tool orchestration done safely**. The goal is not to beat
+commercial coding agents. It is to show:
 
 - stateful orchestration;
 - tools the model cannot misuse;
 - recovery from failure;
 - evaluation honest enough to argue with.
 
+**At a glance**
+
+- **Evidence.**
+  - Automated tests in Python, Go and TypeScript, with CI on every push.
+  - A 25-task benchmark graded by hidden tests, with a test split frozen before it was run.
+  - Results reported unedited, including the weak ones.
+- **Built with.** Python (LangGraph, FastAPI), Go, TypeScript (Next.js), PostgreSQL, Redis,
+  Docker and OpenTelemetry.
+- **Runs on** any OpenAI-compatible model, hosted or local through Ollama.
+
+## See it work: one real run
+
+This is the run in the GIF above: a live end-to-end check on the local qwen2.5 7B model, on a
+laptop. The task is `orders-api-005` from the benchmark.
+
+**The issue**, written the way a user would report it:
+
+> The admin dashboard sends `GET /orders?status=PAID` and gets `"total": 0`, while
+> `status=paid` returns plenty of orders. Status values should be matched case-insensitively;
+> this used to work.
+
+**What happened:**
+
+| Time | Step | What happened |
+|---|---|---|
+| 0:00 | Queued | The run was started from the console. A worker picked it up and started a sandbox holding the buggy repository |
+| 0:35 | Investigate | Two code searches, with read-only tools |
+| 1:08 | Plan | Root cause: *"the status filter in the `list` method of the `OrderStore` class is case-sensitive"*. Files to change: `app/store.py`. This unlocked the editing tools |
+| 1:32 | Edit | The model read the file, changed one line with `replace_text`, ran the tests itself, then called `finish` |
+| 2:35 | Validate | The harness checked the diff (no protected files touched) and ran the suite: 13 passed. The run paused for review, showing the plan, the diff and the test output |
+| 2:46 | Approve | The reviewer approved it in the console |
+| 2:48 | Graded | Hidden tests the agent never saw were added and run: **resolved** |
+
+**The fix it proposed:**
+
+```diff
+         if status:
+             wanted = status
+-            orders = [o for o in orders if o.status.value == wanted]
++            orders = [o for o in orders if o.status.value.lower() == wanted.lower()]
+```
+
+Two details show why the harness matters:
+
+- **A green suite proved little here.** The visible tests already passed before the change,
+  because they don't cover the failing case. The console flags this to the reviewer, and the
+  result was decided by the hidden tests.
+- **Everything is accounted for.** The run used 7 model calls, 5 tool calls and about 14,000
+  tokens. Every call is stored in Postgres and shown on the console's timeline.
+
+A benchmark task has no repository to push to, so this run ended as `completed`. For a GitHub
+issue, approval opens a draft pull request.
+
 ## What it does
 
 | Step | How |
 |---|---|
-| Read the issue and the repo | Read-only tools first: `read_file`, `search_code` (ripgrep), `list_dir`, `git_log`, optional hybrid `find_code` |
+| Read the issue and the repo | Read-only tools first: `read_file`, `search_code` (ripgrep), `list_dir`, `git_log`, `git_diff`, and optionally a hybrid `find_code` |
 | Plan | The model must call `submit_plan` (root cause, files, acceptance criteria) before it gets any editing tools |
-| Edit in a sandbox | `replace_text`, `create_file`, `apply_patch`, run in a per-run container with no network |
+| Edit in a sandbox | `replace_text`, `create_file` and `apply_patch`, all run in a per-run container with no network |
 | Validate | The harness, not the model, checks the full diff against protected paths and runs the tests, before and after |
 | Recover | Test failures go back to the model, within limits on retries, model calls, tool calls, tokens and time |
-| Ask for approval | Diff, test output and reasoning are shown; the run waits, durably, for approve, reject, or reject with a comment (one revision) |
-| Open a PR | Built on GitHub through the Git Data API as a **draft**; the GitHub token never enters the sandbox |
+| Ask for approval | The diff, test output and reasoning are shown. The run waits, durably, for approve, reject, or reject with a comment (one revision) |
+| Open a PR | Built on GitHub through the Git Data API as a **draft**. The GitHub token never enters the sandbox |
 | Record | Every model call, tool call (with policy denials), status change and trace goes to Postgres and OpenTelemetry |
 
-## How it fits together
+## Engineering highlights
 
-```
- Next.js console ──► FastAPI ──► Redis Stream ──► worker: LangGraph agent ──► sandbox-svc (Go) ──► container
-       ▲  SSE           │                             │      │                    only process with      no network,
-       └────────────────┴──────── Postgres ◄──────────┘      └─► LLM (any OpenAI-  the Docker socket   read-only root,
-                         runs · events · tool calls · evals ·     compatible API,                       uid 10001
-                         LangGraph checkpoints · code index        incl. Ollama)
-```
-
-```
-intake ─► llm ⇄ tools ─finish─► validate ─pass─► approval ─approve─► open_pr ─► record
-           │                       └─fail─► diagnose ─► llm (bounded retries)
-           └─budget─► fail ─► record                  reject + comment ─► llm (once)
-```
-
-The full design is in [docs/architecture.md](docs/architecture.md).
-
-## Design decisions
-
-- **The harness validates, not the model.** `finish` only asks for validation. The harness
-  then diffs against `HEAD`, which covers deletions, both sides of renames and files hidden by
-  `.gitignore`. It rejects changes to protected paths, runs the tests, and checks the workspace
-  again afterwards.
-- **The write policy trusts git, not a regex.** `apply_patch` asks `git apply --numstat` which
-  paths a patch touches, which closes five bypasses through quoted names, prefixes, header-only,
-  binary and renamed diffs. A second, independent check then runs at validation.
-- **Durable by construction.** Every graph step is a Postgres checkpoint. A worker that dies is
-  replaced by another that continues from the last step, and a worker renews its job's lease
-  while it runs. Approval is an `interrupt()`; two concurrent approvals cannot both resume a
-  run. The run's sandbox is reaped after 2 hours, so an approval later than that fails the
-  run as `sandbox_expired`.
-- **One process holds the Docker socket.** `sandbox-svc` is small, written in Go with the
-  standard library only, authenticated and loopback-only. The Python agent never touches
-  Docker.
-- **The benchmark measures what users care about.** Held-out tests the agent never sees, issues
-  written as symptoms, no fix hidden in `.git`, scoring immune to `conftest.py` tricks, and a
-  frozen test split.
+| Problem | How RepoPilot handles it | Where to look |
+|---|---|---|
+| A model can claim "done" when it isn't | `finish` only *requests* validation. The harness diffs the workspace against `HEAD` (including deletions, renames and files hidden by `.gitignore`), checks protected paths and runs the tests. It then checks the workspace again, because test code can write files too | [agent/nodes.py](services/agent-svc/src/repopilot/agent/nodes.py) |
+| Generated code is untrusted | One Go service, standard library only, authenticated and listening only on the local machine, is the only process that holds the Docker socket. Each run gets a container with no network, a read-only root and dropped privileges | [sandbox-svc](services/sandbox-svc/internal/sandbox/manager.go), [security model](docs/security.md) |
+| A model can sneak an edit past a filter | Tools unlock by phase: read-only until a plan is submitted. The write policy asks git itself which paths a patch touches, which closes tricks such as quoted names, renames and binary diffs | [tools/policy.py](services/agent-svc/src/repopilot/tools/policy.py), [tools/builtin.py](services/agent-svc/src/repopilot/tools/builtin.py) |
+| Workers crash, and people take time to review | Every graph step is a Postgres checkpoint. Approval is a durable `interrupt()`. Jobs go through Redis Streams consumer groups with lease renewal and reclaim. Two simultaneous approvals cannot both resume a run | [agent/graph.py](services/agent-svc/src/repopilot/agent/graph.py), [queue.py](services/agent-svc/src/repopilot/queue.py), [worker.py](services/agent-svc/src/repopilot/worker.py) |
+| Agent demos are easy to cherry-pick | The benchmark has 25 tasks:<ul><li>hidden tests</li><li>issues written as symptoms</li><li>no fix hidden in `.git`</li><li>scoring that a planted `conftest.py` cannot fool</li><li>a test split frozen by hashes</li><li>95% confidence intervals</li></ul> | [eval/](services/agent-svc/src/repopilot/eval/), [evaluation](docs/evaluation.md) |
+| You can't fix what you can't see | Run timelines in Postgres, streamed live to the console over SSE. OpenTelemetry spans use the GenAI conventions and go to Jaeger or Langfuse | [telemetry.py](services/agent-svc/src/repopilot/telemetry.py), [web/](web/) |
 
 ## Results
 
-> **Status:** final. The dev split was measured twice and the agent tuned from it; the frozen
-> test split was then run once per model (git `42f8d63`) and is reported here unedited.
+The benchmark has 25 tasks across three small fixture repositories: 15 for development and 10 for
+testing. The test split was frozen before it was run, then run once per model.
 
-Benchmark: **25 tasks** across three fixture repos.
+| Run | Model | Resolved (hidden tests pass) | 95% CI |
+|---|---|---|---|
+| dev, before tuning | qwen2.5 7B, local | 4 / 15 (27%) | 11–52% |
+| dev, after tuning | qwen2.5 7B, local | 5 / 15 (33%) | 15–58% |
+| **test (frozen)** | qwen2.5 7B, local | **1 / 10 (10%)** | 2–40% |
+| test, baseline | qwen2.5 3B, local | 0 / 10 (0%) | 0–28% |
 
-| Repo | Tasks | What it is |
-|---|---|---|
-| `orders-api` | 10 | FastAPI orders service: pagination, money and status rules |
-| `textkit` | 8 | Text utilities: slugs, truncation, CSV, identifier case |
-| `inventory` | 7 | FIFO cost ledger, reorder points, CSV import |
+**What the numbers say.** The safety harness held completely. Across all 50 runs there were 0
+harness errors, 0 attempts to modify protected files and 0 edits to existing tests. The limit
+is the model: a 7B model on a 4 GB laptop GPU often emits malformed tool calls, or runs out of
+budget while exploring. When it did produce a validated fix, the hidden tests confirmed it 10
+times out of 13. Trying a hosted model is a configuration change, not a code change.
 
-The split is 15 dev and 10 test, and the test split is frozen by per-task hashes. Every task is
-validated: its hidden tests fail on the bug and pass with the reference fix.
+The numbers are kept exactly as measured, at git `42f8d63`. A later audit fixed a bug in the
+tool gate that cost some of those runs a step, so a re-run will be reported as a new row, not in
+place of these.
 
-| Run | Model | Resolved | 95% CI | Tool-call failures | Median time | Notes |
-|---|---|---|---|---|---|---|
-| dev v1 | qwen2.5 7B (local, Ollama) | 4 / 15 (26.7%) | 11–52% | 3.3% of 122 | 185 s | Before tuning: 6 runs ended on unparseable tool calls. The laptop slept during orders-api-006, so its 23,049 s (the p95 in the report) and its time-budget failure are not agent behaviour |
-| dev v2 | qwen2.5 7B (local, Ollama) | 5 / 15 (33.3%) | 15–58% | 12.7% of 166 | 311 s | After tuning (consecutive nudges, 2400 s budget). Still 6 runs lost to tool calls Ollama could not parse: the model emitted ~200 tokens of call that came back empty |
-| **test** | qwen2.5 7B (local, Ollama) | **1 / 10 (10.0%)** | 2–40% | 25.3% of 190 | 443 s | Frozen split, run once. Unresolved: 5 unparseable tool calls, 2 hit the 40-call budget, 2 the time budget |
-| test, baseline | qwen2.5 3B (local, Ollama) | 0 / 10 (0.0%) | 0–28% | 28.1% of 128 | 57 s | Same budget. Unresolved: 6 unparseable tool calls, 2 call budget, 1 no change, 1 failed the hidden tests |
+Full reports, caveats and how to reproduce them are in [docs/evaluation.md](docs/evaluation.md)
+and [eval/reports/](eval/reports/).
 
-Each eval writes its full report, with per-task outcomes, failure reasons, token use and policy
-denials, to [`eval/reports/`](eval/reports/).
+## Architecture
 
-**What the numbers say.** The harness held: across all 50 measured runs there were 0 harness
-errors, 0 attempts to modify protected files and 0 edits to existing tests, and every
-"resolved" was decided by hidden tests the model never saw. The bottleneck is the model. A 7B
-model running mostly on CPU loses most runs before it can be right: its tool calls come back
-malformed (Ollama returns an empty reply for a call it cannot parse) or it runs out of budget
-while exploring. The 3B baseline does worse on the same budget. Dev (33%) and test (10%) differ
-more than the task mix explains, but with 10 and 15 tasks the intervals overlap widely; read
-both as "a small local model resolves a minority of these issues". The obvious next run is a
-hosted model, which is a configuration change, not a code change.
+```mermaid
+flowchart LR
+    UI["Review console<br/>Next.js"] -->|"REST + live events (SSE)"| API["API<br/>FastAPI"]
+    API -->|job| Q[("Redis Streams<br/>job queue")]
+    Q --> W["Worker<br/>LangGraph agent"]
+    W -->|"chat + tool calls"| LLM["Any OpenAI-compatible LLM<br/>hosted or Ollama"]
+    W -->|"REST + token"| SB["sandbox-svc<br/>Go, stdlib only"]
+    SB -->|"Docker API"| C["One container per run<br/>no network, non-root"]
+    W -->|"draft PR, after approval"| GH["GitHub"]
+    API --> DB[("PostgreSQL + pgvector<br/>runs, events, checkpoints")]
+    W --> DB
+```
 
-**Read these numbers with their limits:**
+- **Console → API.** You start runs and review them in the console. The console talks to the
+  FastAPI service through a server-side proxy that holds the API token, so the browser never
+  sees it.
+- **API → queue → worker.** The API saves each run and puts a job on a Redis Stream. Workers
+  take jobs from the stream. A job whose worker dies is picked up by another worker, which
+  continues from the run's last checkpoint.
+- **Worker → model.** The worker runs the agent and talks to the model through any
+  OpenAI-compatible API, hosted or local.
+- **Worker → sandbox-svc → container.** Every file read, edit and test run goes through
+  sandbox-svc, the only process allowed to create and drive containers.
+- **Postgres.** Postgres holds everything durable: runs, their event timelines, every tool
+  call, evaluation results and the agent's checkpoints.
 
-- The model is a 7B model on a 4 GB laptop GPU. A hosted model is a one-variable switch
-  (`REPOPILOT_LLM_BASE_URL`, `REPOPILOT_LLM_MODEL`); the harness is the same.
-- Every task's *visible* tests pass on the buggy code, so the agent has to reproduce the bug
-  from the issue. A green suite is weak evidence, and the UI and PR body say so.
-- The fixtures are small, and every reference fix is one hunk in one file (*complex* means
-  it changes 3 or more lines).
-- Ollama reports prompt tokens without its cached prefix, so local token counts are low.
-- The wall-clock budget is checked between steps, so one slow model call can overshoot it: on
-  this machine inventory-005 took 4,394 s against a 2,400 s budget with only five model calls.
-  Latency figures are hardware-bound.
-- GitHub runs get no network inside the sandbox, so a repository's dependencies must be baked
-  into a `repopilot-sandbox-*` image named in its `.repopilot.yml`; nothing is installed at
-  run time.
+The agent itself is a state machine. Each step is checkpointed, so a run can stop at any point
+and continue later:
 
-## Stack
+```mermaid
+flowchart TD
+    I["Read the issue"] --> X["Investigate<br/>read-only tools"]
+    X --> P["Submit a plan"]
+    P --> E["Edit code in the sandbox"]
+    E --> V{"Harness validates:<br/>diff, protected files, tests"}
+    V -- "tests fail (limited retries)" --> E
+    V -- pass --> H{"Human review"}
+    H -- approve --> PR["Open draft PR"]
+    H -- "reject with comment (once)" --> E
+    H -- reject --> R["Record the outcome"]
+    PR --> R
+    X -. "out of budget" .-> F["Fail"]
+    E -. "out of budget" .-> F
+    F --> R
+```
 
-| Layer | Technology |
+Budgets cover model calls, tool calls, tokens and wall-clock time. They are checked before every
+model call and every tool call, so one reply asking for 60 tool calls cannot overshoot them.
+Time spent waiting for the reviewer is not counted. The exact graph, persistence, queue
+semantics and GitHub flow are in [docs/architecture.md](docs/architecture.md).
+
+## Tech stack
+
+| Area | Technology |
 |---|---|
-| Agent | Python 3.12, LangGraph (Postgres checkpointer), Pydantic, OpenAI-compatible chat API, Ollama |
-| Tools | Structured tool calling with JSON-schema arguments; also served over **MCP** (`repopilot mcp`) |
-| Sandbox | Go 1.25 service on the Docker Engine API; hardened containers |
-| Service | FastAPI, SSE, Redis Streams (consumer groups, reclaim), psycopg 3 |
-| Data | PostgreSQL 16 + pgvector (runs, events, evals, checkpoints, hybrid code index with RRF) |
-| Observability | OpenTelemetry (GenAI semantic conventions) → Jaeger or Langfuse |
-| Evaluation | pytest, a 25-task benchmark with held-out tests, Wilson intervals, frozen test split |
-| UI | Next.js 15 + TypeScript |
-| Delivery | Docker Compose, GitHub Actions, AWS notes and user-data ([docs/deploy-aws.md](docs/deploy-aws.md)) |
+| Agent | Python 3.12, LangGraph with a Postgres checkpointer, Pydantic, structured tool calling over any OpenAI-compatible API |
+| Sandbox | Go 1.25 (standard library only), Docker Engine API, hardened containers |
+| Service | FastAPI, Server-Sent Events, Redis Streams (consumer groups, reclaim), psycopg 3 |
+| Data | PostgreSQL 16 with pgvector: runs, events, evals, checkpoints, and optional hybrid code search (vector + full-text, RRF) |
+| Interfaces | Next.js 15 review console, a CLI, and an MCP server that exposes the sandboxed tools |
+| Observability | OpenTelemetry with GenAI semantic conventions, exported to Jaeger or Langfuse |
+| Quality | pytest, Go tests with the race detector, ESLint, GitHub Actions, Dependabot |
+| Delivery | Docker Compose, AWS deployment notes and a user-data script |
 
-## Run it
+## Try it
 
-Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), Node 22, and either an
-OpenAI-compatible API key or [Ollama](https://ollama.com).
+You need Docker, [uv](https://docs.astral.sh/uv/), Node 22, and either an API key for an
+OpenAI-compatible model or [Ollama](https://ollama.com).
 
 ```bash
-cp .env.example .env                       # set the REPOPILOT_LLM_* values
-docker compose up -d                       # Postgres, Redis, sandbox-svc
+cp .env.example .env                  # point REPOPILOT_LLM_* at your model
+docker compose up -d                  # Postgres, Redis, sandbox-svc
 cd services/agent-svc
 uv sync
 uv run repopilot migrate
-uv run repopilot bench build-images        # sandbox images for the fixture repos
-uv run repopilot bench validate            # proves all 25 tasks are sound
-```
-
-Solve one task from the terminal, then review it:
-
-```bash
+uv run repopilot bench build-images   # sandbox images for the benchmark repos
 uv run repopilot solve --task orders-api-005
-uv run repopilot approve <run-id>          # or: --reject --comment "use casefold"
+uv run repopilot approve <run-id>     # or: --reject --comment "use casefold"
 ```
 
-Or run the service and the console:
+To use the review console instead of the terminal:
 
 ```bash
-uv run repopilot serve                     # API on 127.0.0.1:8000
-uv run repopilot worker                    # executes queued runs
-cd ../../web && npm ci && npm run dev      # console on 127.0.0.1:3000
+uv run repopilot eval import          # loads the shipped results for the Evaluations page
+uv run repopilot serve                # API on 127.0.0.1:8000
+uv run repopilot worker               # runs queued jobs
+cd ../../web && npm ci && npm run dev # console on http://127.0.0.1:3000
 ```
 
-Evaluate:
-
-```bash
-uv run repopilot eval run --name my-dev --split dev
-uv run repopilot bench freeze --note "before final test run"
-uv run repopilot eval run --name my-test --split test
-uv run repopilot eval compare my-dev my-test
-```
-
-GitHub issues: set `REPOPILOT_GITHUB_TOKEN` (a fine-grained token with issues read, and
-contents and pull requests write), then start a run with `{"repo": "owner/name",
-"issue_number": 42}` from the console or the API. Add a `.repopilot.yml` to the target repo
-for its test command and sandbox image.
-
-## Sandbox security model
-
-Agent edits and test runs happen in a throwaway container per run, created and driven only by
-`sandbox-svc` (Go). The agent service never touches Docker; it calls sandbox-svc's REST API with
-a bearer token.
-
-| Control | Setting |
-|---|---|
-| Network | `--network none`: no egress, no ingress |
-| User | uid/gid 10001, never root; `no-new-privileges`; all capabilities dropped |
-| Filesystem | Read-only root; `/workspace` is a 512 MB tmpfs mounted `nodev,nosuid`; `/tmp` is a 256 MB tmpfs |
-| Resources | 1 CPU, 1 GiB memory with no swap, 256 PIDs |
-| Mounts | The workspace volume only: no host paths, no Docker socket, no secrets |
-| Time | Every command runs under `timeout` (default 120 s, max 600 s), with a stream-deadline backstop |
-| Leftovers | Processes a command leaves behind are killed; if none can start, the sandbox restarts and the workspace is restored |
-| Output | stdout and stderr capped at 64 KiB each |
-| Images | Only `repopilot-sandbox-*` and `repopilot-bench-*` images |
-| Lifetime | Sandboxes older than 2 h are reaped, including orphans from a crashed service |
-
-Files never cross the boundary through a shell:
-
-- **Uploads** are rewritten by sandbox-svc before Docker sees them:
-  - only regular files, directories and symlinks are kept;
-  - names must stay inside `/workspace`, and nothing may be written beneath a symlink;
-  - setuid and setgid bits are cleared;
-  - parent directories are emitted explicitly, so a symlink planted earlier is replaced, not
-    followed.
-- **Reads** run as the sandbox user and open every path component with `O_NOFOLLOW`.
-
-What this is **not**:
-
-- **The command allowlist is defence in depth, not the boundary.** `python` can do anything a
-  shell can. The container is the boundary.
-- **sandbox-svc is root-equivalent on the host**, because it holds the Docker socket. That is
-  why it is small, dependency-free, loopback-only, authenticated and locked down.
-- **Containers share the host kernel.** For untrusted public use, the next step is gVisor or
-  Firecracker. See [docs/deploy-aws.md](docs/deploy-aws.md).
+Local models, GitHub issues, evaluation runs and deployment are covered in
+[docs/running.md](docs/running.md).
 
 ## Tests
 
-```bash
-cd services/agent-svc
-uv run pytest                    # unit: graph, tools, policy, scoring, API models (fakes, no network)
-uv run pytest -m integration     # Postgres and Redis: recorder, migrations, API, queue
-uv run pytest -m sandbox         # live sandbox: isolation, tools, task validation, end-to-end solve
-cd ../sandbox-svc && go test ./...
+| Suite | Command (from `services/agent-svc` unless noted) | Needs |
+|---|---|---|
+| Unit | `uv run pytest` | nothing (fakes, no network) |
+| Integration | `uv run pytest -m integration` | Postgres, Redis |
+| Sandbox | `uv run pytest -m sandbox` | sandbox-svc and Docker |
+| Go | `go test ./...` in `services/sandbox-svc` | nothing |
+| Web | `npm run lint && npm test && npm run build` in `web/` | nothing |
+
+CI runs all of them on every push.
+
+## Repository tour
+
+```
+services/agent-svc    Python: agent graph, tools, benchmark, evaluation, API, worker, CLI, MCP server
+services/sandbox-svc  Go: the hardened sandbox service
+web/                  Next.js review console
+bench/                fixture repositories, 25 tasks with hidden tests, sandbox images
+db/migrations/        numbered SQL migrations
+eval/reports/         every evaluation run: per-task JSONL, Markdown report, metadata
+deploy/               AWS user data, Ollama Modelfiles for the local models
+docs/                 architecture, security, evaluation, running, AWS deployment, design history
 ```
 
-## Project layout
+## Limits and next steps
 
-```
-services/agent-svc   Python: agent graph, tools, bench, eval, API, worker, MCP server
-services/sandbox-svc Go: hardened sandbox service
-web/                 Next.js review console
-bench/               fixture repos, task generators, 25 tasks, sandbox images
-db/migrations/       numbered SQL migrations
-eval/reports/        eval results (JSONL, Markdown, metadata)
-docs/                architecture, plans per milestone, AWS deployment
-```
+- **Small fixtures.** The benchmark repositories are small, and every reference fix is one
+  change in one file. Real repositories are harder.
+- **Shared kernel.** Containers share the host kernel. For untrusted public use, the next step
+  is a sandboxed runtime such as gVisor or Firecracker, set where sandbox-svc creates the
+  container.
+- **Small local model.** The reported numbers come from a 7B model on a laptop GPU. A hosted
+  model is the obvious next evaluation run.
+- **Baked dependencies.** GitHub runs have no network inside the sandbox, so a repository's
+  dependencies must be baked into a sandbox image.
 
 ## License
 
-MIT
+[MIT](LICENSE)

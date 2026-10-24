@@ -29,6 +29,15 @@ var sandboxID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 const maxJSONBody = 64 << 10
 
+// TransferTimeout bounds reading a request body; the server's ReadTimeout is set to it, sized
+// for a whole-repo upload.
+const TransferTimeout = 5 * time.Minute
+
+// transferWriteTimeout replaces the server-wide WriteTimeout for the upload and file handlers:
+// the body may take TransferTimeout to arrive, then the handler may wait as long again on the
+// sandbox lock and the daemon. Exec sizes its own from the command's timeout.
+const transferWriteTimeout = 2 * TransferTimeout
+
 // NewServer returns the sandbox-svc router. Every /v1 route needs the bearer token: this
 // service holds the Docker socket, so even a loopback caller must authenticate.
 func NewServer(logger *slog.Logger, sb Sandboxes, token string) http.Handler {
@@ -111,7 +120,16 @@ func (h *handlers) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
+// extendWriteDeadline lets a handler answer after the server-wide WriteTimeout, which would
+// otherwise drop the response of a call that legitimately runs longer.
+func (h *handlers) extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d)); err != nil {
+		h.log.Warn("could not extend write deadline", "err", err)
+	}
+}
+
 func (h *handlers) upload(w http.ResponseWriter, r *http.Request, id string) {
+	h.extendWriteDeadline(w, transferWriteTimeout)
 	if err := h.sb.Upload(r.Context(), id, r.Body); err != nil {
 		h.fail(w, err)
 		return
@@ -133,6 +151,7 @@ func (h *handlers) readFile(w http.ResponseWriter, r *http.Request, id string) {
 	if !ok {
 		return
 	}
+	h.extendWriteDeadline(w, transferWriteTimeout)
 	data, err := h.sb.ReadFile(r.Context(), id, p)
 	if err != nil {
 		h.fail(w, err)
@@ -148,6 +167,7 @@ func (h *handlers) writeFile(w http.ResponseWriter, r *http.Request, id string) 
 	if !ok {
 		return
 	}
+	h.extendWriteDeadline(w, transferWriteTimeout)
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, sandbox.MaxFileBytes))
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) {
@@ -173,10 +193,7 @@ func (h *handlers) exec(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	// An exec may legitimately run far longer than the server-wide WriteTimeout, including the
 	// cleanup or reset that follows it.
-	limit := time.Duration(sandbox.ClampTimeout(req.TimeoutS))*time.Second + sandbox.ExecOverhead
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(limit)); err != nil {
-		h.log.Warn("could not extend write deadline", "err", err)
-	}
+	h.extendWriteDeadline(w, time.Duration(sandbox.ClampTimeout(req.TimeoutS))*time.Second+sandbox.ExecOverhead)
 	res, err := h.sb.Exec(r.Context(), id, req)
 	if err != nil {
 		h.fail(w, err)

@@ -67,22 +67,46 @@ type Manager struct {
 	log           *slog.Logger
 	backstopGrace time.Duration // beyond timeout+kill grace before the stream is abandoned
 	maxUpload     int64
-	locks         sync.Map // sandbox id -> *sync.Mutex: one exec/read/reset at a time
+	locksMu       sync.Mutex
+	locks         map[string]*sandboxLock // one exec/read/reset at a time; see lock
+}
+
+// sandboxLock is one sandbox's mutex and the number of callers holding or awaiting it.
+type sandboxLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // lock serialises work on one sandbox: the post-exec cleanup kills every process, so a
-// concurrent exec in the same sandbox would be killed with it.
+// concurrent exec in the same sandbox would be killed with it. An entry lives only while a
+// caller holds or awaits it, so a destroyed or reaped sandbox leaves none behind. Destroy does
+// not drop it itself: a caller still in flight would then hold a mutex a newcomer never sees.
 func (m *Manager) lock(id string) func() {
-	mu, _ := m.locks.LoadOrStore(id, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	return mu.(*sync.Mutex).Unlock
+	m.locksMu.Lock()
+	l := m.locks[id]
+	if l == nil {
+		l = &sandboxLock{}
+		m.locks[id] = l
+	}
+	l.refs++
+	m.locksMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		m.locksMu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(m.locks, id)
+		}
+		m.locksMu.Unlock()
+	}
 }
 
 func NewManager(e Engine, cfg Config, logger *slog.Logger) *Manager {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Manager{e: e, cfg: cfg, log: logger, backstopGrace: 15 * time.Second, maxUpload: MaxUploadBytes}
+	return &Manager{e: e, cfg: cfg, log: logger, backstopGrace: 15 * time.Second, maxUpload: MaxUploadBytes,
+		locks: map[string]*sandboxLock{}}
 }
 
 func containerName(id string) string { return containerPrefix + id }

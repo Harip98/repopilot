@@ -96,7 +96,7 @@ func run(logger *slog.Logger) error {
 		Addr:              addr,
 		Handler:           api.NewServer(logger, mgr, token),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       5 * time.Minute, // repo uploads; exec extends its own write deadline
+		ReadTimeout:       api.TransferTimeout, // repo uploads; slow handlers extend their write deadline
 		WriteTimeout:      30 * time.Second,
 	}
 	errc := make(chan error, 1)

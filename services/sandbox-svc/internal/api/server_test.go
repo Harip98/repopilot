@@ -19,27 +19,31 @@ import (
 const testToken = "test-token-0123456789"
 const testID = "0123456789abcdef"
 
-// fakeSandboxes returns err from every call when set, and otherwise canned results.
+// fakeSandboxes returns err from every call when set, and otherwise canned results. Upload,
+// file and exec calls take delay first.
 type fakeSandboxes struct {
-	err       error
-	execDelay time.Duration
-	written   []byte
+	err     error
+	delay   time.Duration
+	written []byte
 }
 
 func (f *fakeSandboxes) Create(context.Context, string) (string, error) { return testID, f.err }
 func (f *fakeSandboxes) Upload(_ context.Context, _ string, r io.Reader) error {
 	_, _ = io.Copy(io.Discard, r)
+	time.Sleep(f.delay)
 	return f.err
 }
 func (f *fakeSandboxes) ReadFile(context.Context, string, string) ([]byte, error) {
+	time.Sleep(f.delay)
 	return []byte("content"), f.err
 }
 func (f *fakeSandboxes) WriteFile(_ context.Context, _, _ string, data []byte) error {
+	time.Sleep(f.delay)
 	f.written = data
 	return f.err
 }
 func (f *fakeSandboxes) Exec(context.Context, string, sandbox.ExecRequest) (sandbox.ExecResponse, error) {
-	time.Sleep(f.execDelay)
+	time.Sleep(f.delay)
 	return sandbox.ExecResponse{ExitCode: 0, Stdout: "ok"}, f.err
 }
 func (f *fakeSandboxes) Destroy(context.Context, string) error { return f.err }
@@ -193,22 +197,36 @@ func TestBadRequests(t *testing.T) {
 	}
 }
 
-func TestExecExtendsWriteDeadline(t *testing.T) {
-	srv := httptest.NewUnstartedServer(newTestServer(&fakeSandboxes{execDelay: 400 * time.Millisecond}))
-	srv.Config.WriteTimeout = 200 * time.Millisecond
-	srv.Start()
-	defer srv.Close()
+// Every handler that can outlast the server-wide WriteTimeout (an exec, a slow upload, a file
+// call waiting on the sandbox lock) must extend its write deadline, or its answer is lost.
+func TestSlowHandlersExtendWriteDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path, body string
+		status                   int
+		want                     string
+	}{
+		{"exec", http.MethodPost, "/exec", `{"argv":["ls"],"timeout_s":1}`, http.StatusOK, `"stdout":"ok"`},
+		{"upload", http.MethodPut, "/archive", "tar bytes", http.StatusNoContent, ""},
+		{"read file", http.MethodGet, "/file?path=a.py", "", http.StatusOK, "content"},
+		{"write file", http.MethodPut, "/file?path=a.py", "x", http.StatusNoContent, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewUnstartedServer(newTestServer(&fakeSandboxes{delay: 400 * time.Millisecond}))
+			srv.Config.WriteTimeout = 200 * time.Millisecond
+			srv.Start()
+			defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/sandboxes/"+testID+"/exec",
-		strings.NewReader(`{"argv":["ls"],"timeout_s":1}`))
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("exec request failed (write deadline not extended?): %v", err)
-	}
-	defer resp.Body.Close()
-	var out sandbox.ExecResponse
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Stdout != "ok" {
-		t.Fatalf("status %d out %+v", resp.StatusCode, out)
+			req, _ := http.NewRequest(tc.method, srv.URL+"/v1/sandboxes/"+testID+tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer "+testToken)
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				t.Fatalf("response lost (write deadline not extended?): %v", err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || resp.StatusCode != tc.status || !strings.Contains(string(body), tc.want) {
+				t.Fatalf("status %d body %q err %v, want %d %q", resp.StatusCode, body, err, tc.status, tc.want)
+			}
+		})
 	}
 }

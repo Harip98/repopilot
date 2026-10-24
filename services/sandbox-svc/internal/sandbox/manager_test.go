@@ -90,6 +90,8 @@ func (f *fakeEngine) ListContainers(context.Context, string) ([]docker.Container
 
 func (f *fakeEngine) PutArchive(_ context.Context, _, dir string, r io.Reader) error {
 	b, err := io.ReadAll(r)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.put, f.putDir = b, dir
 	f.putCalls++
 	return err
@@ -433,5 +435,156 @@ func TestExecForkFailureIsExhausted(t *testing.T) {
 	_, err := newTestManager(e).Exec(context.Background(), "0123456789abcdef", ExecRequest{Argv: []string{"python"}})
 	if !errors.Is(err, ErrSandboxExhausted) || e.execs[len(e.execs)-1][0] != killAllCmd {
 		t.Fatalf("err = %v execs = %v", err, e.execs)
+	}
+}
+
+// lockEntries counts the manager's per-sandbox lock entries.
+func lockEntries(m *Manager) int {
+	m.locksMu.Lock()
+	defer m.locksMu.Unlock()
+	return len(m.locks)
+}
+
+// A long-running service must not keep a lock entry for every sandbox it has ever served:
+// once destroyed or reaped, a sandbox leaves none behind.
+func TestSandboxLocksArePruned(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	e := newFakeEngine()
+	e.listed = []docker.ContainerSummary{{ID: "c-old", Names: []string{"/rp-sbx-00000000000000bb"},
+		Labels: map[string]string{"repopilot.created": strconv.FormatInt(now.Add(-3*time.Hour).Unix(), 10)}}}
+	m := newTestManager(e)
+	m.cfg.Now = func() time.Time { return now }
+	ctx := context.Background()
+	archive := tarOf(t, &tar.Header{Name: "a.py", Typeflag: tar.TypeReg, Size: 1, Mode: 0o644}, []byte("x"))
+	for _, id := range []string{"00000000000000aa", "00000000000000bb"} {
+		if _, err := m.Exec(ctx, id, ExecRequest{Argv: []string{"ls"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.ReadFile(ctx, id, "a.py"); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.WriteFile(ctx, id, "a.py", []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Upload(ctx, id, bytes.NewReader(archive)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.Destroy(ctx, "00000000000000aa"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := m.Reap(ctx); n != 1 || err != nil {
+		t.Fatalf("reaped %d err %v", n, err)
+	}
+	if n := lockEntries(m); n != 0 {
+		t.Fatalf("%d lock entries left after destroy and reap, want 0", n)
+	}
+}
+
+// Destroy force-removes the container, which ends any call in flight, so it must not wait for
+// the sandbox lock; and pruning must not hand a newcomer a fresh lock while the old one is held.
+func TestDestroyKeepsSandboxLockExclusive(t *testing.T) {
+	const id = "0123456789abcdef"
+	m := newTestManager(newFakeEngine())
+	ctx := context.Background()
+	unlock := m.lock(id) // an exec in flight
+	destroyed := make(chan error, 1)
+	go func() { destroyed <- m.Destroy(ctx, id) }()
+	select {
+	case err := <-destroyed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Destroy waited for the sandbox lock")
+	}
+	read := make(chan struct{})
+	go func() {
+		_, _ = m.ReadFile(ctx, id, "a.py")
+		close(read)
+	}()
+	select {
+	case <-read:
+		t.Fatal("a call ran while another held the sandbox lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	<-read
+	if n := lockEntries(m); n != 0 {
+		t.Fatalf("%d lock entries left, want 0", n)
+	}
+}
+
+// exclusiveEngine counts engine calls that overlap in one container: the sandbox lock must
+// prevent them.
+type exclusiveEngine struct {
+	*fakeEngine
+	mu       sync.Mutex
+	busy     map[string]int
+	overlaps int
+}
+
+func (x *exclusiveEngine) enter(container string) func() {
+	x.mu.Lock()
+	if x.busy[container]++; x.busy[container] > 1 {
+		x.overlaps++
+	}
+	x.mu.Unlock()
+	time.Sleep(time.Millisecond) // widen the window for an overlap
+	return func() {
+		x.mu.Lock()
+		x.busy[container]--
+		x.mu.Unlock()
+	}
+}
+
+func (x *exclusiveEngine) Exec(ctx context.Context, container string, argv []string, workdir string, maxOut int) (docker.ExecResult, error) {
+	defer x.enter(container)()
+	return x.fakeEngine.Exec(ctx, container, argv, workdir, maxOut)
+}
+
+func (x *exclusiveEngine) PutArchive(ctx context.Context, container, dir string, r io.Reader) error {
+	defer x.enter(container)()
+	return x.fakeEngine.PutArchive(ctx, container, dir, r)
+}
+
+// Concurrent calls and destroys on a few sandboxes create and prune lock entries constantly;
+// the lock must stay exclusive throughout and leave nothing behind. Run it with -race.
+func TestSandboxLockUnderConcurrency(t *testing.T) {
+	x := &exclusiveEngine{fakeEngine: newFakeEngine(), busy: map[string]int{}}
+	m := newTestManager(x)
+	ctx := context.Background()
+	ids := []string{"00000000000000aa", "00000000000000bb", "00000000000000cc"}
+	archive := tarOf(t, &tar.Header{Name: "a.py", Typeflag: tar.TypeReg, Size: 1, Mode: 0o644}, []byte("x"))
+	var wg sync.WaitGroup
+	for g := range 16 {
+		wg.Go(func() {
+			for i := range 25 {
+				id := ids[(g+i)%len(ids)]
+				var err error
+				switch (g*7 + i) % 5 {
+				case 0:
+					_, err = m.Exec(ctx, id, ExecRequest{Argv: []string{"ls"}})
+				case 1:
+					_, err = m.ReadFile(ctx, id, "a.py")
+				case 2:
+					err = m.WriteFile(ctx, id, "a.py", []byte("x"))
+				case 3:
+					err = m.Upload(ctx, id, bytes.NewReader(archive))
+				case 4:
+					err = m.Destroy(ctx, id) // never waits on the lock
+				}
+				if err != nil {
+					t.Error(err)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if x.overlaps != 0 {
+		t.Errorf("%d engine calls overlapped in one sandbox", x.overlaps)
+	}
+	if n := lockEntries(m); n != 0 {
+		t.Errorf("%d lock entries left, want 0", n)
 	}
 }

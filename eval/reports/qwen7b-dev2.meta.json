@@ -2,7 +2,7 @@
   "model": "qwen2.5-7b-16k",
   "endpoint": "http://127.0.0.1:11434/v1",
   "tasks": 15,
-  "git_sha": "4f3bf95",
+  "git_sha": "4be50bc",
   "date": "2026-10-21",
   "host": "Windows-11",
   "budget": "max_llm_calls=40, max_tool_calls=80, max_seconds=2400.0, max_retries=3"

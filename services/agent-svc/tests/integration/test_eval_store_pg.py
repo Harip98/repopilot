@@ -45,7 +45,7 @@ async def test_shipped_reports_import_into_what_the_console_reads(settings, conn
     }
     assert f"{evals['qwen7b-dev']['updated_at']:%Y-%m-%d}" == "2026-10-20"  # the day it ran
     assert summarize(await store.load("qwen7b-test")).resolved == 1  # GET /v1/evals/{name}
-    assert (await store.get_meta("qwen7b-dev"))["git_sha"] == "5882df8"
+    assert (await store.get_meta("qwen7b-dev"))["git_sha"] == "74b3a3b"
 
     again = await import_reports(store, REPORTS_DIR)
     assert {status for _, status, _ in again} == {"skipped"}

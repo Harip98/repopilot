@@ -1,6 +1,6 @@
 # Eval `qwen7b-test`
 
-**model**: qwen2.5-7b-16k · **endpoint**: http://127.0.0.1:11434/v1 · **split**: test · **tasks**: 10 · **task_hash**: db49406366504b0c · **git_sha**: 42f8d63 · **date**: 2026-10-21 · **host**: Windows-11 · **budget**: max_llm_calls=40, max_tool_calls=80, max_tokens=600000, max_seconds=2400.0, max_retries=3, max_explore_steps=15
+**model**: qwen2.5-7b-16k · **endpoint**: http://127.0.0.1:11434/v1 · **split**: test · **tasks**: 10 · **task_hash**: db49406366504b0c · **git_sha**: 5179422 · **date**: 2026-10-21 · **host**: Windows-11 · **budget**: max_llm_calls=40, max_tool_calls=80, max_tokens=600000, max_seconds=2400.0, max_retries=3, max_explore_steps=15
 
 | Metric | Value |
 |---|---|

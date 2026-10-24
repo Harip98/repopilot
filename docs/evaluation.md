@@ -113,7 +113,7 @@ a hosted model, which needs a configuration change, not a code change.
 - **The model is small.** It is a 7B model on a 4 GB laptop GPU. A hosted model only needs
   `REPOPILOT_LLM_BASE_URL`, `REPOPILOT_LLM_MODEL` and `REPOPILOT_LLM_API_KEY` set; the harness
   stays the same.
-- **Dev v1 and v2 ran on an earlier revision of the benchmark.** Commit `bbc7bac`, made after
+- **Dev v1 and v2 ran on an earlier revision of the benchmark.** Commit `151cf98`, made after
   them and before the test split was frozen, made three changes:
   - it removed code comments that hinted at fixes, such as "oldest first (FIFO)" in the
     docstring of the inventory ledger's `ship()`, which dev task inventory-002 breaks;
@@ -133,7 +133,7 @@ a hosted model, which needs a configuration change, not a code change.
 
 ## Changes since the reported runs
 
-The reported runs were made at git `42f8d63`. A later audit found and fixed a bug in the
+The reported runs were made at git `5179422`. A later audit found and fixed a bug in the
 agent's tool gate. On the 15th exploration reply, the tools the model had just been offered
 were refused. The tools of the last allowed model call were also refused, so that call was
 wasted. Some of the measured runs were affected.

@@ -115,7 +115,7 @@ is the model: a 7B model on a 4 GB laptop GPU often emits malformed tool calls, 
 budget while exploring. When it did produce a validated fix, the hidden tests confirmed it 10
 times out of 13. Trying a hosted model is a configuration change, not a code change.
 
-The numbers are kept exactly as measured, at git `42f8d63`. A later audit fixed a bug in the
+The numbers are kept exactly as measured, at git `5179422`. A later audit fixed a bug in the
 tool gate that cost some of those runs a step, so a re-run will be reported as a new row, not in
 place of these.
 

@@ -1,6 +1,6 @@
 # Bases pinned by digest (Dependabot proposes updates). CI's go job reads the Go version from
 # the build stage's tag, so the tests run on the release that builds this binary.
-FROM golang:1.25.14-alpine3.24@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS build
+FROM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download

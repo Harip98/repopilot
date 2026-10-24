@@ -17,20 +17,29 @@ _DATE = "2026-09-01T09:00:00+00:00"
 # The repo is built on the host but used by Linux git in the sandbox: ignore host config and
 # templates, and pin the settings a Windows `git init` would otherwise write.
 _GIT = ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "commit.gpgsign=false"]
-_LOCAL_CONFIG = {"core.symlinks": "true", "core.filemode": "true", "core.ignorecase": "false",
-                 "core.autocrlf": "false"}
+_LOCAL_CONFIG = {
+    "core.symlinks": "true",
+    "core.filemode": "true",
+    "core.ignorecase": "false",
+    "core.autocrlf": "false",
+}
 
 
 def _git(cwd: Path, *args: str) -> None:
     env = {
         **os.environ,
-        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_AUTHOR_NAME": "Orders Team", "GIT_AUTHOR_EMAIL": "dev@example.com",
-        "GIT_COMMITTER_NAME": "Orders Team", "GIT_COMMITTER_EMAIL": "dev@example.com",
-        "GIT_AUTHOR_DATE": _DATE, "GIT_COMMITTER_DATE": _DATE,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "Orders Team",
+        "GIT_AUTHOR_EMAIL": "dev@example.com",
+        "GIT_COMMITTER_NAME": "Orders Team",
+        "GIT_COMMITTER_EMAIL": "dev@example.com",
+        "GIT_AUTHOR_DATE": _DATE,
+        "GIT_COMMITTER_DATE": _DATE,
     }
-    proc = subprocess.run([*_GIT, *args], cwd=cwd, env=env, capture_output=True, text=True,
-                          check=False)
+    proc = subprocess.run(
+        [*_GIT, *args], cwd=cwd, env=env, capture_output=True, text=True, check=False
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
 

@@ -111,25 +111,32 @@ def summarize(results: list[EvalResult], *, split_difficulty: bool = True) -> Su
     by_difficulty = {}
     if split_difficulty:
         for level in sorted({r.difficulty for r in results}):
-            by_difficulty[level] = summarize([r for r in results if r.difficulty == level],
-                                             split_difficulty=False)
+            by_difficulty[level] = summarize(
+                [r for r in results if r.difficulty == level], split_difficulty=False
+            )
     return Summary(
-        n=n, resolved=resolved, errors=sum(r.status == "error" for r in results),
-        resolution_rate=_rate(resolved, n), resolution_ci=wilson(resolved, n),
+        n=n,
+        resolved=resolved,
+        errors=sum(r.status == "error" for r in results),
+        resolution_rate=_rate(resolved, n),
+        resolution_ci=wilson(resolved, n),
         patch_applied_rate=_rate(sum(r.patch_applied for r in results), n),
         visible_pass_rate=_rate(sum(r.visible_tests_passed for r in results), n),
         baseline_pass_rate=_rate(sum(baseline), len(baseline)),
         tool_calls=tool_calls,
         tool_failure_rate=_rate(sum(r.tool_failures for r in results), tool_calls),
         avg_retries=_rate(sum(r.retries for r in results), n),
-        p50_latency_s=percentile(latencies, 50), p95_latency_s=percentile(latencies, 95),
+        p50_latency_s=percentile(latencies, 50),
+        p95_latency_s=percentile(latencies, 95),
         prompt_tokens=sum(r.prompt_tokens for r in results),
         completion_tokens=sum(r.completion_tokens for r in results),
         tokens_per_resolved=None if resolved == 0 else tokens / resolved,
-        cost_usd=cost, cost_per_resolved=None if resolved == 0 else cost / resolved,
+        cost_usd=cost,
+        cost_per_resolved=None if resolved == 0 else cost / resolved,
         unauthorized_attempts=sum(r.unauthorized_attempts for r in results),
         runs_with_test_edits=sum(r.test_files_modified for r in results),
-        failure_reasons=dict(reasons.most_common()), by_difficulty=by_difficulty,
+        failure_reasons=dict(reasons.most_common()),
+        by_difficulty=by_difficulty,
     )
 
 
@@ -171,9 +178,12 @@ def render_markdown(name: str, meta: dict, summary: Summary, results: list[EvalR
     lo, hi = s.resolution_ci
     ci = "" if lo is None else f" (95% CI {lo * 100:.0f}–{hi * 100:.0f}%)"
     lines = [
-        f"# Eval `{name}`", "",
-        " · ".join(f"**{k}**: {v}" for k, v in meta.items()), "",
-        "| Metric | Value |", "|---|---|",
+        f"# Eval `{name}`",
+        "",
+        " · ".join(f"**{k}**: {v}" for k, v in meta.items()),
+        "",
+        "| Metric | Value |",
+        "|---|---|",
         f"| Resolution rate | {_pct(s.resolution_rate)} ({s.resolved}/{s.n}) |",
         f"| Resolution 95% CI | {ci.strip(' ()').removeprefix('95% CI ') or 'n/a'} |",
         f"| Patch-apply rate | {_pct(s.patch_applied_rate)} |",
@@ -191,21 +201,27 @@ def render_markdown(name: str, meta: dict, summary: Summary, results: list[EvalR
     ]
     if s.by_difficulty:
         lines += ["## By difficulty", "", "| Difficulty | Resolved | Rate |", "|---|---|---|"]
-        lines += [f"| {k} | {v.resolved}/{v.n} | {_pct(v.resolution_rate)} |"
-                  for k, v in s.by_difficulty.items()]
+        lines += [
+            f"| {k} | {v.resolved}/{v.n} | {_pct(v.resolution_rate)} |"
+            for k, v in s.by_difficulty.items()
+        ]
         lines.append("")
     if s.failure_reasons:
         lines += ["## Unresolved, by reason", "", "| Reason | Tasks |", "|---|---|"]
         lines += [f"| {k} | {v} |" for k, v in s.failure_reasons.items()]
         lines.append("")
-    lines += ["## Tasks", "",
-              "| Task | Difficulty | Resolved | Status | Reason | Retries | LLM / tool calls | Tokens | Time |",
-              "|---|---|---|---|---|---|---|---|---|"]
+    lines += [
+        "## Tasks",
+        "",
+        "| Task | Difficulty | Resolved | Status | Reason | Retries | LLM / tool calls | Tokens | Time |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
     for r in sorted(results, key=lambda r: r.task_id):
         reason = _cell(r.failure_reason or (r.error or "")[:60])
         lines.append(
             f"| {r.task_id} | {r.difficulty} | {'yes' if r.resolved else 'no'} | {r.status} | "
             f"{reason} | {r.retries} | {r.llm_calls} / {r.tool_calls} | "
-            f"{r.prompt_tokens + r.completion_tokens:,} | {r.latency_ms / 1000:.0f} s |")
+            f"{r.prompt_tokens + r.completion_tokens:,} | {r.latency_ms / 1000:.0f} s |"
+        )
     lines += ["", "## Definitions", "", DEFINITIONS]
     return "\n".join(lines)

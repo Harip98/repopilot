@@ -26,21 +26,32 @@ OPEN_SCHEMA = {
     "type": "object",
     "properties": {
         "path": {"type": "string", "description": "Absolute path of a local repository to open."},
-        "image": {"type": "string", "default": "repopilot-sandbox-base",
-                  "description": "Sandbox image (repopilot-sandbox-* or repopilot-bench-*)."},
+        "image": {
+            "type": "string",
+            "default": "repopilot-sandbox-base",
+            "description": "Sandbox image (repopilot-sandbox-* or repopilot-bench-*).",
+        },
         "test_command": {"type": "array", "items": {"type": "string"}, "default": ["pytest", "-q"]},
     },
     "required": ["path"],
 }
-CLOSE_SCHEMA = {"type": "object", "properties": {"workspace_id": {"type": "string"}},
-                "required": ["workspace_id"]}
+CLOSE_SCHEMA = {
+    "type": "object",
+    "properties": {"workspace_id": {"type": "string"}},
+    "required": ["workspace_id"],
+}
 
 
 class WorkspaceTools:
     """The MCP-independent core: workspaces are sandboxes; tools dispatch through the registry."""
 
-    def __init__(self, sandbox: SandboxClient, registry: ToolRegistry | None = None, *,
-                 roots: list[Path] | None = None):
+    def __init__(
+        self,
+        sandbox: SandboxClient,
+        registry: ToolRegistry | None = None,
+        *,
+        roots: list[Path] | None = None,
+    ):
         self.sandbox = sandbox
         self.registry = registry or build_registry()
         self.workspaces: dict[str, ToolContext] = {}
@@ -48,8 +59,14 @@ class WorkspaceTools:
 
     def tool_schemas(self) -> list[tuple[str, str, dict]]:
         tools = [
-            ("open_workspace", ("Copy a local repository into a new isolated sandbox. Returns a "
-             "workspace_id for the other tools."), OPEN_SCHEMA),
+            (
+                "open_workspace",
+                (
+                    "Copy a local repository into a new isolated sandbox. Returns a "
+                    "workspace_id for the other tools."
+                ),
+                OPEN_SCHEMA,
+            ),
             ("close_workspace", "Destroy a workspace's sandbox.", CLOSE_SCHEMA),
         ]
         for spec in self.registry.specs():
@@ -94,8 +111,11 @@ class WorkspaceTools:
             await self.sandbox.destroy(sandbox_id)
             raise
         self.workspaces[sandbox_id] = ToolContext(
-            sandbox=self.sandbox, sandbox_id=sandbox_id, policy=ToolPolicy(),
-            test_command=list(arguments.get("test_command") or ["pytest", "-q"]))
+            sandbox=self.sandbox,
+            sandbox_id=sandbox_id,
+            policy=ToolPolicy(),
+            test_command=list(arguments.get("test_command") or ["pytest", "-q"]),
+        )
         return json.dumps({"workspace_id": sandbox_id}), False
 
     async def close_all(self) -> None:
@@ -106,19 +126,27 @@ class WorkspaceTools:
 
 def build_server(core: WorkspaceTools) -> Server:
     async def list_tools(ctx, params) -> types.ListToolsResult:
-        return types.ListToolsResult(tools=[
-            types.Tool(name=name, description=description, input_schema=schema)
-            for name, description, schema in core.tool_schemas()])
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(name=name, description=description, input_schema=schema)
+                for name, description, schema in core.tool_schemas()
+            ]
+        )
 
     async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
         text, is_error = await core.call(params.name, dict(params.arguments or {}))
-        return types.CallToolResult(content=[types.TextContent(type="text", text=text)],
-                                    is_error=is_error)
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=text)], is_error=is_error
+        )
 
-    return Server("repopilot", version="0.1.0",
-                  instructions="Open a repository with open_workspace, then use the returned "
-                               "workspace_id with the other tools. Everything runs in a sandbox.",
-                  on_list_tools=list_tools, on_call_tool=call_tool)
+    return Server(
+        "repopilot",
+        version="0.1.0",
+        instructions="Open a repository with open_workspace, then use the returned "
+        "workspace_id with the other tools. Everything runs in a sandbox.",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
 
 
 async def serve_stdio(core: WorkspaceTools) -> None:

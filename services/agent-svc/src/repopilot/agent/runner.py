@@ -65,7 +65,9 @@ def checkpoint_serde() -> JsonPlusSerializer:
     """A serializer that rebuilds only our own state models from checkpoints (LangGraph is
     moving to refusing unregistered types, which would break every resume)."""
     models = ("Plan", "Budget", "RunUsage", "TestReport", "Approval", "GitHubTarget", "RunState")
-    return JsonPlusSerializer(allowed_msgpack_modules=[("repopilot.agent.state", m) for m in models])
+    return JsonPlusSerializer(
+        allowed_msgpack_modules=[("repopilot.agent.state", m) for m in models]
+    )
 
 
 @asynccontextmanager
@@ -82,16 +84,23 @@ def _config(run_id: str) -> dict:
 
 def _result(out: dict) -> RunResult:
     interrupts = out.pop("__interrupt__", None)
-    return RunResult(state=RunState.model_validate(out),
-                     interrupt=interrupts[0].value if interrupts else None)
+    return RunResult(
+        state=RunState.model_validate(out), interrupt=interrupts[0].value if interrupts else None
+    )
 
 
 WorkspaceHook = Callable[[Path], Awaitable[None]]
 
 
-async def prepare_bench_run(task: Task, sandbox: SandboxClient, *, run_id: str,
-                            auto_approve: bool = False, budget: Budget | None = None,
-                            on_workspace: WorkspaceHook | None = None) -> RunState:
+async def prepare_bench_run(
+    task: Task,
+    sandbox: SandboxClient,
+    *,
+    run_id: str,
+    auto_approve: bool = False,
+    budget: Budget | None = None,
+    on_workspace: WorkspaceHook | None = None,
+) -> RunState:
     """Build the task's buggy workspace, start a sandbox from its image and upload it.
     `on_workspace` sees the host copy first (e.g. to build the code index)."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -106,29 +115,39 @@ async def prepare_bench_run(task: Task, sandbox: SandboxClient, *, run_id: str,
             await sandbox.destroy(sandbox_id)
             raise
     return RunState(
-        run_id=run_id, task_id=task.id, repo=task.repo, issue_title=task.title,
-        issue_text=task.issue, sandbox_id=sandbox_id, test_command=task.test_command,
-        protected_paths=task.protected_paths, auto_approve=auto_approve,
-        budget=budget or Budget(), baseline_tests_passed=baseline.exit_code == 0,
+        run_id=run_id,
+        task_id=task.id,
+        repo=task.repo,
+        issue_title=task.title,
+        issue_text=task.issue,
+        sandbox_id=sandbox_id,
+        test_command=task.test_command,
+        protected_paths=task.protected_paths,
+        auto_approve=auto_approve,
+        budget=budget or Budget(),
+        baseline_tests_passed=baseline.exit_code == 0,
     )
 
 
 async def start_run(state: RunState, deps: RunDeps, checkpointer: BaseCheckpointSaver) -> RunResult:
     graph = GRAPH.compile(checkpointer=checkpointer)
-    with run_span("repopilot.run", state.run_id, task_id=state.task_id, repo=state.repo,
-                  model=deps.llm.model):
+    with run_span(
+        "repopilot.run", state.run_id, task_id=state.task_id, repo=state.repo, model=deps.llm.model
+    ):
         return _result(await graph.ainvoke(state, _config(state.run_id), context=deps))
 
 
-async def resume_run(run_id: str, decision: dict, deps: RunDeps,
-                     checkpointer: BaseCheckpointSaver) -> RunResult:
+async def resume_run(
+    run_id: str, decision: dict, deps: RunDeps, checkpointer: BaseCheckpointSaver
+) -> RunResult:
     graph = GRAPH.compile(checkpointer=checkpointer)
     snapshot = await graph.aget_state(_config(run_id))
     if not snapshot.values:
         raise RunNotFound(run_id)
     if "approval" not in snapshot.next:
-        raise NotAwaitingApproval(f"run {run_id} is {snapshot.values.get('status')}, "
-                                  "not awaiting approval")
+        raise NotAwaitingApproval(
+            f"run {run_id} is {snapshot.values.get('status')}, not awaiting approval"
+        )
     with run_span("repopilot.run.resume", run_id, decision=decision.get("decision")):
         return _result(await graph.ainvoke(Command(resume=decision), _config(run_id), context=deps))
 
@@ -138,8 +157,42 @@ async def grade(task: Task, sandbox: SandboxClient, sandbox_id: str) -> GradeRes
     after the agent has finished: the model never sees these files."""
     await sandbox.upload_dir(sandbox_id, task.heldout_dir)
     res = await sandbox.exec(sandbox_id, task.heldout_command, timeout_s=300)
-    return GradeResult(resolved=res.exit_code == 0, exit_code=res.exit_code,
-                       output_tail=(res.stdout + res.stderr)[-4000:])
+    return GradeResult(
+        resolved=res.exit_code == 0,
+        exit_code=res.exit_code,
+        output_tail=(res.stdout + res.stderr)[-4000:],
+    )
+
+
+async def grade_and_record(task: Task, deps: RunDeps, run_id: str, sandbox_id: str) -> GradeResult:
+    """Grade a finished run and add the grade to its timeline (the console's hidden-tests stop),
+    whichever process drove the run."""
+    graded = await grade(task, deps.sandbox, sandbox_id)
+    await deps.recorder.event(
+        run_id, "grade", "heldout", graded.model_dump(exclude={"output_tail"})
+    )
+    return graded
+
+
+# What a Ctrl-C (asyncio.run cancels the running task) or a shutdown looks like from inside.
+_INTERRUPTS = (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
+
+
+def failure_fields(exc: BaseException) -> dict:
+    """How a run that died with `exc` is recorded."""
+    text = type(exc).__name__ + (f": {exc}" if str(exc) else "")
+    return {
+        "failure_reason": "interrupted" if isinstance(exc, _INTERRUPTS) else "error",
+        "error": text[:2000],
+    }
+
+
+async def mark_failed(recorder, run_id: str, exc: BaseException) -> None:
+    """Best effort: the original error matters more than a failed status write."""
+    try:
+        await recorder.status(run_id, "failed", **failure_fields(exc))
+    except Exception:
+        log.warning("could not mark run %s failed", run_id, exc_info=True)
 
 
 @dataclass
@@ -151,20 +204,40 @@ class BenchOutcome:
     final_diff: str = ""
 
 
-async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpointSaver, *,
-                         run_id: str, auto_approve: bool, budget: Budget | None = None,
-                         on_workspace: WorkspaceHook | None = None) -> BenchOutcome:
+async def run_bench_task(
+    task: Task,
+    deps: RunDeps,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    run_id: str,
+    auto_approve: bool,
+    budget: Budget | None = None,
+    on_workspace: WorkspaceHook | None = None,
+) -> BenchOutcome:
     """Prepare, run and (when finished) grade one task. The sandbox is always destroyed unless
-    the run is paused for approval, and an unexpected error marks the run failed."""
+    the run is paused for approval, and an unexpected error or an interrupt (Ctrl-C) marks the
+    run failed: nothing else would ever finish a run driven from the terminal."""
     state: RunState | None = None
     result: RunResult | None = None
     try:
-        state = await prepare_bench_run(task, deps.sandbox, run_id=run_id,
-                                        auto_approve=auto_approve, budget=budget,
-                                        on_workspace=on_workspace)
-        await deps.recorder.create_run(run_id, repo=task.repo, issue_text=task.issue,
-                                       task_id=task.id, issue_ref=None, model=deps.llm.model,
-                                       task_mode="bench", sandbox_id=state.sandbox_id)
+        state = await prepare_bench_run(
+            task,
+            deps.sandbox,
+            run_id=run_id,
+            auto_approve=auto_approve,
+            budget=budget,
+            on_workspace=on_workspace,
+        )
+        await deps.recorder.create_run(
+            run_id,
+            repo=task.repo,
+            issue_text=task.issue,
+            task_id=task.id,
+            issue_ref=None,
+            model=deps.llm.model,
+            task_mode="bench",
+            sandbox_id=state.sandbox_id,
+        )
         result = await start_run(state, deps, checkpointer)
         graded, final_diff = None, result.state.diff
         if result.interrupt is None:
@@ -173,12 +246,11 @@ async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpoint
             except Exception:
                 log.warning("could not read the final diff of %s", run_id, exc_info=True)
             if result.state.status in ("completed", "pr_opened"):
-                graded = await grade(task, deps.sandbox, state.sandbox_id)
+                graded = await grade_and_record(task, deps, run_id, state.sandbox_id)
         return BenchOutcome(result=result, graded=graded, final_diff=final_diff)
-    except Exception as exc:
-        if state is not None:
-            await deps.recorder.status(run_id, "failed", failure_reason="error",
-                                       error=f"{type(exc).__name__}: {exc}"[:2000])
+    except BaseException as exc:
+        if state is not None and (result is None or result.interrupt is None):
+            await mark_failed(deps.recorder, run_id, exc)
         raise
     finally:
         if state is not None and (result is None or result.interrupt is None):
@@ -190,6 +262,13 @@ async def run_bench_task(task: Task, deps: RunDeps, checkpointer: BaseCheckpoint
 
 async def has_checkpoint(checkpointer: BaseCheckpointSaver, run_id: str) -> bool:
     return await checkpointer.aget_tuple(_config(run_id)) is not None
+
+
+async def pending_nodes(checkpointer: BaseCheckpointSaver, run_id: str) -> tuple[str, ...]:
+    """The nodes a run's last checkpoint goes on with: () once it has finished (or never
+    started), ("approval",) while it waits for its reviewer."""
+    snapshot = await GRAPH.compile(checkpointer=checkpointer).aget_state(_config(run_id))
+    return tuple(snapshot.next)
 
 
 async def continue_run(run_id: str, deps: RunDeps, checkpointer: BaseCheckpointSaver) -> RunResult:
@@ -208,9 +287,7 @@ async def finish_bench(result: RunResult, task: Task | None, deps: RunDeps) -> G
     try:
         graded = None
         if task is not None and result.state.status in ("completed", "pr_opened"):
-            graded = await grade(task, deps.sandbox, sandbox_id)
-            await deps.recorder.event(result.state.run_id, "grade", "heldout",
-                                      graded.model_dump(exclude={"output_tail"}))
+            graded = await grade_and_record(task, deps, result.state.run_id, sandbox_id)
         return graded
     finally:
         try:

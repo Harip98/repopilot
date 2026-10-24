@@ -21,13 +21,28 @@ def _default(value):
 
 
 def format_event(row: dict) -> str:
-    data = json.dumps({"seq": row["seq"], "node": row["node"], "kind": row["kind"],
-                       "payload": row["payload"], "at": row["created_at"]}, default=_default)
+    data = json.dumps(
+        {
+            "seq": row["seq"],
+            "node": row["node"],
+            "kind": row["kind"],
+            "payload": row["payload"],
+            "at": row["created_at"],
+        },
+        default=_default,
+    )
     return f"id: {row['seq']}\nevent: {row['node']}.{row['kind']}\ndata: {data}\n\n"
 
 
-async def run_events(repo: EventSession, run_id: str, after_seq: int, *, poll_s: float = 1.0,
-                     keepalive_s: float = 15.0, settle_s: float = 10.0) -> AsyncIterator[str]:
+async def run_events(
+    repo: EventSession,
+    run_id: str,
+    after_seq: int,
+    *,
+    poll_s: float = 1.0,
+    keepalive_s: float = 15.0,
+    settle_s: float = 10.0,
+) -> AsyncIterator[str]:
     """Stream events until the run is terminal and no event has arrived for `settle_s`: some
     are written after the final status (the held-out grade, after the graph has returned)."""
     last, last_sent = after_seq, time.monotonic()

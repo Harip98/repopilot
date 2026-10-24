@@ -14,6 +14,25 @@ from repopilot.config import get_settings
 
 SANDBOX_UID = 10001
 SKIP_DIRS = frozenset({"__pycache__", ".venv"})
+# The programs sandbox-svc will exec (allowedCommands in internal/sandbox/policy.go); anything
+# else is refused with 400 command_not_allowed.
+SANDBOX_COMMANDS = frozenset(
+    {
+        "git",
+        "rg",
+        "python",
+        "python3",
+        "pytest",
+        "ruff",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "find",
+        "diff",
+    }
+)
 
 
 class ExecResult(BaseModel):
@@ -74,7 +93,9 @@ class SandboxClient:
         self, base_url: str, token: str, *, transport: httpx.AsyncBaseTransport | None = None
     ):
         self._http = httpx.AsyncClient(
-            base_url=base_url, transport=transport, timeout=httpx.Timeout(30.0),
+            base_url=base_url,
+            transport=transport,
+            timeout=httpx.Timeout(30.0),
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -82,7 +103,9 @@ class SandboxClient:
         return self
 
     async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None,
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
         await self.aclose()
@@ -111,8 +134,11 @@ class SandboxClient:
         """Extract a tar archive into /workspace. sandbox-svc sanitises it and rejects entries
         that could land outside the workspace (code `bad_archive`)."""
         await self._request(
-            "PUT", f"/v1/sandboxes/{sandbox_id}/archive", content=data,
-            headers={"Content-Type": "application/x-tar"}, timeout=300.0,
+            "PUT",
+            f"/v1/sandboxes/{sandbox_id}/archive",
+            content=data,
+            headers={"Content-Type": "application/x-tar"},
+            timeout=300.0,
         )
 
     async def read_file(self, sandbox_id: str, path: str) -> bytes:
@@ -121,7 +147,10 @@ class SandboxClient:
 
     async def write_file(self, sandbox_id: str, path: str, data: bytes) -> None:
         await self._request(
-            "PUT", f"/v1/sandboxes/{sandbox_id}/file", params={"path": path}, content=data,
+            "PUT",
+            f"/v1/sandboxes/{sandbox_id}/file",
+            params={"path": path},
+            content=data,
             headers={"Content-Type": "application/octet-stream"},
         )
 

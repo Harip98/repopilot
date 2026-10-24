@@ -23,12 +23,16 @@ PLAN = {"root_cause": "r", "files": ["app/store.py"], "acceptance_criteria": ["a
 
 def script_for(task) -> list:
     if task.id == "orders-api-005":  # apply the reference fix
-        return [tool_reply("submit_plan", **PLAN),
-                tool_reply("apply_patch", patch=task.fix_patch.read_text()),
-                tool_reply("finish", summary="fixed")]
-    return [tool_reply("submit_plan", **PLAN),  # change nothing that matters
-            tool_reply("create_file", path="NOTES.md", content="n\n"),
-            tool_reply("finish", summary="not fixed")]
+        return [
+            tool_reply("submit_plan", **PLAN),
+            tool_reply("apply_patch", patch=task.fix_patch.read_text()),
+            tool_reply("finish", summary="fixed"),
+        ]
+    return [
+        tool_reply("submit_plan", **PLAN),  # change nothing that matters
+        tool_reply("create_file", path="NOTES.md", content="n\n"),
+        tool_reply("finish", summary="not fixed"),
+    ]
 
 
 async def test_eval_two_tasks_scripted(settings, conn: psycopg.Connection, tmp_path):
@@ -39,8 +43,13 @@ async def test_eval_two_tasks_scripted(settings, conn: psycopg.Connection, tmp_p
     async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
 
         async def run_task(task, run_id):
-            deps = RunDeps(llm=FakeChatModel(script_for(task)), sandbox=sandbox,
-                           registry=build_registry(), recorder=recorder, pr=NoPR())
+            deps = RunDeps(
+                llm=FakeChatModel(script_for(task)),
+                sandbox=sandbox,
+                registry=build_registry(),
+                recorder=recorder,
+                pr=NoPR(),
+            )
             return await run_bench_task(task, deps, saver, run_id=run_id, auto_approve=True)
 
         results = await run_eval("live-e1", tasks, run_task, store, model="fake")
@@ -48,9 +57,14 @@ async def test_eval_two_tasks_scripted(settings, conn: psycopg.Connection, tmp_p
 
     by_id = {r.task_id: r for r in results}
     assert by_id["orders-api-005"].resolved and not by_id["orders-api-003"].resolved
-    assert by_id["orders-api-003"].status == "completed" and by_id["orders-api-003"].heldout_exit_code != 0
-    rows = conn.execute("SELECT task_id, resolved, run_id IS NOT NULL FROM eval_results"
-                        " WHERE eval_run = 'live-e1' ORDER BY task_id").fetchall()
+    assert (
+        by_id["orders-api-003"].status == "completed"
+        and by_id["orders-api-003"].heldout_exit_code != 0
+    )
+    rows = conn.execute(
+        "SELECT task_id, resolved, run_id IS NOT NULL FROM eval_results"
+        " WHERE eval_run = 'live-e1' ORDER BY task_id"
+    ).fetchall()
     assert rows == [("orders-api-003", False, True), ("orders-api-005", True, True)]
     assert await store.load("live-e1") == sorted(results, key=lambda r: r.task_id)
 

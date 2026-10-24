@@ -20,7 +20,9 @@ def clean_rel_path(path: str) -> str | None:
 
 
 class ToolPolicy:
-    def __init__(self, protected_paths: list[str] | tuple[str, ...] = (), max_patch_bytes: int = 65536):
+    def __init__(
+        self, protected_paths: list[str] | tuple[str, ...] = (), max_patch_bytes: int = 65536
+    ):
         self.protected_paths = list(protected_paths)
         self.max_patch_bytes = max_patch_bytes
 

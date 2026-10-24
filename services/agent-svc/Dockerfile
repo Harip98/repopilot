@@ -1,12 +1,13 @@
 # agent-svc: the RepoPilot API (`repopilot serve`) and worker (`repopilot worker`).
 # Build from the repository root so migrations and benchmark tasks are included:
 #   docker build -f services/agent-svc/Dockerfile -t repopilot-agent-svc .
-FROM python:3.12-slim
+# The base is pinned by digest (Dependabot proposes updates); uv is pinned exactly.
+FROM python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "uv>=0.5,<1" \
+    && pip install --no-cache-dir "uv==0.13.4" \
     && useradd --uid 10010 --create-home repopilot
 
 ENV REPOPILOT_ROOT=/app UV_PROJECT_ENVIRONMENT=/opt/venv PATH=/opt/venv/bin:$PATH \

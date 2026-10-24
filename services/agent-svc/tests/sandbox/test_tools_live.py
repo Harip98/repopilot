@@ -17,7 +17,9 @@ TEST = "from pkg.mod import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\
 
 @pytest.fixture
 async def tools(tmp_path):
-    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["."]\n', newline="\n")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\npythonpath = ["."]\n', newline="\n"
+    )
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "__init__.py").write_text("", newline="\n")
     (tmp_path / "pkg" / "mod.py").write_text(MOD, newline="\n")
@@ -28,9 +30,12 @@ async def tools(tmp_path):
     await client.upload_dir(sid, tmp_path)
     for argv in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-qm", "initial"]):
         assert (await client.exec(sid, argv)).exit_code == 0
-    ctx = ToolContext(sandbox=client, sandbox_id=sid,
-                      policy=ToolPolicy(protected_paths=["tests/test_heldout_*"]),
-                      test_command=["pytest", "-q"])
+    ctx = ToolContext(
+        sandbox=client,
+        sandbox_id=sid,
+        policy=ToolPolicy(protected_paths=["tests/test_heldout_*"]),
+        test_command=["pytest", "-q"],
+    )
     registry = build_registry()
 
     async def call(name, **args):
@@ -48,7 +53,11 @@ async def tools(tmp_path):
 
 async def test_read_list_search(tools):
     out = await tools("read_file", path="pkg/mod.py", start_line=4, end_line=5)
-    assert out.ok and out.content.splitlines()[0] == "    4\t" and "    5\tdef sub(a, b):" in out.content
+    assert (
+        out.ok
+        and out.content.splitlines()[0] == "    4\t"
+        and "    5\tdef sub(a, b):" in out.content
+    )
     out = await tools("list_dir")
     assert out.ok and "pkg/" in out.content.splitlines() and "pkg/mod.py" in out.content
     assert ".git" not in out.content
@@ -127,9 +136,7 @@ BYPASS_PATCHES = {
         "new file mode 100644\n--- /dev/null\n"
         '+++ "b/.github/workflows/ci.yml"\n@@ -0,0 +1 @@\n+on: push\n'
     ),
-    "non a/b prefix": (
-        "--- /dev/null\n+++ x/tests/test_heldout_pwn.py\n@@ -0,0 +1 @@\n+x = 1\n"
-    ),
+    "non a/b prefix": ("--- /dev/null\n+++ x/tests/test_heldout_pwn.py\n@@ -0,0 +1 @@\n+x = 1\n"),
     "header-only new file": (
         "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n"
         f"new file mode 100644\nindex 0000000..{EMPTY_BLOB[:7]}\n"
@@ -152,4 +159,3 @@ async def test_apply_patch_bypasses_denied(tools, patch):
     assert not out.ok and out.denied, out
     diff = (await tools("git_diff")).content
     assert diff == "(no changes)", diff
-

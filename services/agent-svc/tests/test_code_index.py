@@ -40,8 +40,13 @@ async def test_find_code_tool():
     registry = build_registry(find_code_tool=True)
     assert "find_code" in [s.name for s in registry.subset({"read"}).specs()]
     assert "find_code" not in build_registry().names
-    ctx = ToolContext(sandbox=ScriptedSandbox(), sandbox_id="s", policy=ToolPolicy(),
-                      test_command=["pytest"], code_search=search)
+    ctx = ToolContext(
+        sandbox=ScriptedSandbox(),
+        sandbox_id="s",
+        policy=ToolPolicy(),
+        test_command=["pytest"],
+        code_search=search,
+    )
     out = await registry.dispatch(ctx, "find_code", json.dumps({"query": "where are discounts"}))
     assert out.ok and out.content.startswith("app/pricing.py:10-20")
     ctx.code_search = None

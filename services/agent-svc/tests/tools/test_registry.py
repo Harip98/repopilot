@@ -20,8 +20,16 @@ pytestmark = pytest.mark.anyio
 
 def test_policy_denies():
     policy = ToolPolicy(protected_paths=["tests/heldout_*"])
-    for path in (".git/config", ".github/workflows/ci.yml", "tests/heldout_pagination.py",
-                 "../x", "/etc/x", "", "a\\b", "pkg/../../x"):
+    for path in (
+        ".git/config",
+        ".github/workflows/ci.yml",
+        "tests/heldout_pagination.py",
+        "../x",
+        "/etc/x",
+        "",
+        "a\\b",
+        "pkg/../../x",
+    ):
         assert policy.check_write(path) is not None, path
     for path in ("app/orders.py", "tests/test_orders.py", "./app//x.py", ".gitignore"):
         assert policy.check_write(path) is None, path
@@ -58,16 +66,28 @@ def _registry(calls: list, *, fail: Exception | None = None) -> ToolRegistry:
             raise fail
         return f"{args.path} x{args.count}"
 
-    return ToolRegistry([
-        Tool("echo", "Echo a path.", EchoArgs, echo, "read"),
-        Tool("write_echo", "Echo, as a write.", EchoArgs, echo, "write",
-             check=lambda policy, args: policy.check_write(args.path)),
-    ])
+    return ToolRegistry(
+        [
+            Tool("echo", "Echo a path.", EchoArgs, echo, "read"),
+            Tool(
+                "write_echo",
+                "Echo, as a write.",
+                EchoArgs,
+                echo,
+                "write",
+                check=lambda policy, args: policy.check_write(args.path),
+            ),
+        ]
+    )
 
 
 def _ctx() -> ToolContext:
-    return ToolContext(sandbox=None, sandbox_id="0123456789abcdef", policy=ToolPolicy(),
-                       test_command=["pytest", "-q"])
+    return ToolContext(
+        sandbox=None,
+        sandbox_id="0123456789abcdef",
+        policy=ToolPolicy(),
+        test_command=["pytest", "-q"],
+    )
 
 
 async def test_dispatch_ok():
@@ -80,9 +100,13 @@ async def test_dispatch_ok():
 async def test_dispatch_bad_arguments():
     calls = []
     reg = _registry(calls)
-    for raw, needle in (("{not json", "not valid JSON"), ("[1, 2]", "JSON object"),
-                        ("{}", "path"), ('{"path": "a", "count": "many"}', "count"),
-                        ('{"path": "a", "count": 9}', "count")):
+    for raw, needle in (
+        ("{not json", "not valid JSON"),
+        ("[1, 2]", "JSON object"),
+        ("{}", "path"),
+        ('{"path": "a", "count": "many"}', "count"),
+        ('{"path": "a", "count": 9}', "count"),
+    ):
         out = await reg.dispatch(_ctx(), "echo", raw)
         assert not out.ok and needle in out.error, (raw, out.error)
     assert calls == []
@@ -102,10 +126,12 @@ async def test_dispatch_policy_denied():
 
 async def test_dispatch_sandbox_and_tool_errors():
     out = await _registry([], fail=SandboxError("not_found", "no such file", 404)).dispatch(
-        _ctx(), "echo", '{"path": "x"}')
+        _ctx(), "echo", '{"path": "x"}'
+    )
     assert not out.ok and not out.denied and out.error == "not_found: no such file"
     out = await _registry([], fail=ToolError("old text occurs 2 times")).dispatch(
-        _ctx(), "echo", '{"path": "x"}')
+        _ctx(), "echo", '{"path": "x"}'
+    )
     assert not out.ok and out.error == "old text occurs 2 times"
 
 
@@ -126,15 +152,19 @@ def test_specs_and_subset():
 
 async def test_dispatch_never_raises():
     out = await _registry([], fail=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")).dispatch(
-        _ctx(), "echo", '{"path": "x"}')
+        _ctx(), "echo", '{"path": "x"}'
+    )
     assert not out.ok and out.error.startswith("internal error: UnicodeDecodeError")
-    out = await _registry([], fail=RuntimeError("x" * 20000)).dispatch(_ctx(), "echo", '{"path": "x"}')
+    out = await _registry([], fail=RuntimeError("x" * 20000)).dispatch(
+        _ctx(), "echo", '{"path": "x"}'
+    )
     assert not out.ok and len(out.error) < 2100
 
 
 async def test_dispatch_policy_denied_from_tool():
     out = await _registry([], fail=PolicyDenied(".github/ is protected")).dispatch(
-        _ctx(), "echo", '{"path": "x"}')
+        _ctx(), "echo", '{"path": "x"}'
+    )
     assert not out.ok and out.denied and out.error == "policy: .github/ is protected"
 
 

@@ -26,8 +26,15 @@ TOKEN = "ghp_SECRET_never_in_sandbox"
 
 
 def _ok(stdout: str = "", code: int = 0) -> ExecResult:
-    return ExecResult(exit_code=code, stdout=stdout, stderr="", stdout_truncated=False,
-                      stderr_truncated=False, timed_out=False, duration_ms=1)
+    return ExecResult(
+        exit_code=code,
+        stdout=stdout,
+        stderr="",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        timed_out=False,
+        duration_ms=1,
+    )
 
 
 def _tarball(members: list[tuple[tarfile.TarInfo, bytes]]) -> bytes:
@@ -64,9 +71,16 @@ class GitHubFake:
         assert request.headers["authorization"] == f"Bearer {TOKEN}"
         path = request.url.path
         if path == "/repos/acme/shop/issues/7":
-            return httpx.Response(200, json={"number": 7, "title": "Totals off by a cent",
-                                             "body": "Steps...", "state": "open",
-                                             "html_url": "https://github.com/acme/shop/issues/7"})
+            return httpx.Response(
+                200,
+                json={
+                    "number": 7,
+                    "title": "Totals off by a cent",
+                    "body": "Steps...",
+                    "state": "open",
+                    "html_url": "https://github.com/acme/shop/issues/7",
+                },
+            )
         if path == "/repos/acme/shop":
             return httpx.Response(200, json={"default_branch": "main"})
         if path == "/repos/acme/shop/git/ref/heads/main":
@@ -102,8 +116,11 @@ class SandboxSpy:
 
     async def upload_dir(self, sandbox_id: str, src: Path) -> None:
         self.uploaded.append(src)
-        self.seen += [p.read_bytes().decode(errors="ignore") for p in src.rglob("*")
-                      if p.is_file() and ".git" not in p.parts]
+        self.seen += [
+            p.read_bytes().decode(errors="ignore")
+            for p in src.rglob("*")
+            if p.is_file() and ".git" not in p.parts
+        ]
 
     async def exec(self, sandbox_id, argv, timeout_s=120, cwd=None) -> ExecResult:
         self.seen.append(" ".join(argv))
@@ -138,8 +155,12 @@ def test_tarball_extraction_is_safe(tmp_path: Path):
     escape.type, escape.linkname = tarfile.SYMTYPE, "/etc/passwd"
     device = tarfile.TarInfo(root + "mem")
     device.type = tarfile.CHRTYPE
-    for bad in ([_file(root + "../../outside.py")], [_file("/abs/path.py")],
-                [(escape, b""), _file(root + "evil/x")], [(device, b"")]):
+    for bad in (
+        [_file(root + "../../outside.py")],
+        [_file("/abs/path.py")],
+        [(escape, b""), _file(root + "evil/x")],
+        [(device, b"")],
+    ):
         with pytest.raises(WorkspaceError):
             extract_tarball(_tarball(bad), tmp_path / "bad")
     assert not (tmp_path / "outside.py").exists()
@@ -147,14 +168,17 @@ def test_tarball_extraction_is_safe(tmp_path: Path):
 
 def test_setuid_bits_are_dropped(tmp_path: Path):
     root = "acme-shop-aaaaaaa/"
-    extract_tarball(_tarball([_dir(root), _file(root + "run.sh", b"#!/bin/sh\n", 0o4755)]), tmp_path)
+    extract_tarball(
+        _tarball([_dir(root), _file(root + "run.sh", b"#!/bin/sh\n", 0o4755)]), tmp_path
+    )
     assert (tmp_path / "run.sh").stat().st_mode & 0o4000 == 0
 
 
 def test_repo_config_defaults_and_override(tmp_path: Path):
     assert load_repo_config(tmp_path) == RepoConfig()
-    (tmp_path / ".repopilot.yml").write_text("test_command: [python, -m, pytest, tests]\n"
-                                             "image: repopilot-bench-orders-api\n")
+    (tmp_path / ".repopilot.yml").write_text(
+        "test_command: [python, -m, pytest, tests]\nimage: repopilot-bench-orders-api\n"
+    )
     config = load_repo_config(tmp_path)
     assert config.test_command == ["python", "-m", "pytest", "tests"]
     assert config.image == "repopilot-bench-orders-api"
@@ -173,39 +197,63 @@ async def test_workspace_import_commit_and_token_never_sent_to_sandbox():
     root = "acme-shop-aaaaaaa/"
     fake = GitHubFake(_tarball([_dir(root), _file(root + "app/main.py")]))
     sandbox = SandboxSpy()
-    state = await prepare_github_run({"issue_ref": "acme/shop#7"}, run_id="run-1",
-                                     github=_client(fake), sandbox=sandbox)
+    state = await prepare_github_run(
+        {"issue_ref": "acme/shop#7"}, run_id="run-1", github=_client(fake), sandbox=sandbox
+    )
     assert state.issue_title == "Totals off by a cent" and state.repo == "acme/shop"
-    assert state.github == GitHubTarget(repo="acme/shop", issue_number=7,
-                                        issue_url="https://github.com/acme/shop/issues/7",
-                                        base_branch="main", base_sha="a" * 40)
+    assert state.github == GitHubTarget(
+        repo="acme/shop",
+        issue_number=7,
+        issue_url="https://github.com/acme/shop/issues/7",
+        base_branch="main",
+        base_sha="a" * 40,
+    )
     assert state.test_command == ["pytest", "-q"] and state.baseline_tests_passed
     assert all(TOKEN not in item for item in sandbox.seen)
 
 
 def _approved_state(**kw) -> RunState:
-    base = {"run_id": "abcdef12-3456-7890-abcd-ef1234567890", "repo": "acme/shop",
-            "issue_title": "Totals off by a cent", "issue_text": "Steps...",
-            "sandbox_id": "0123456789abcdef", "test_command": ["pytest", "-q"],
-            "summary": "Round once at the end.",
-            "plan": Plan(root_cause="float tax", files=["app/pricing.py"],
-                         acceptance_criteria=["$10.00 totals $10.83"]),
-            "last_tests": TestReport(passed=True, exit_code=0),
-            "approval": Approval(decision="approve", by="alice"),
-            "github": GitHubTarget(repo="acme/shop", issue_number=7,
-                                   issue_url="https://github.com/acme/shop/issues/7",
-                                   base_branch="main", base_sha="a" * 40)}
+    base = {
+        "run_id": "abcdef12-3456-7890-abcd-ef1234567890",
+        "repo": "acme/shop",
+        "issue_title": "Totals off by a cent",
+        "issue_text": "Steps...",
+        "sandbox_id": "0123456789abcdef",
+        "test_command": ["pytest", "-q"],
+        "summary": "Round once at the end.",
+        "plan": Plan(
+            root_cause="float tax",
+            files=["app/pricing.py"],
+            acceptance_criteria=["$10.00 totals $10.83"],
+        ),
+        "last_tests": TestReport(passed=True, exit_code=0),
+        "approval": Approval(decision="approve", by="alice"),
+        "github": GitHubTarget(
+            repo="acme/shop",
+            issue_number=7,
+            issue_url="https://github.com/acme/shop/issues/7",
+            base_branch="main",
+            base_sha="a" * 40,
+        ),
+    }
     return RunState(**(base | kw))
 
 
 async def test_open_draft_pr_calls_git_data_api_in_order():
     fake = GitHubFake()
-    sandbox = RawSandboxSpy({"app/pricing.py": b"fixed\n"},
-                            _raw(("100644", "100644", "M", ["app/pricing.py"])))
+    sandbox = RawSandboxSpy(
+        {"app/pricing.py": b"fixed\n"}, _raw(("100644", "100644", "M", ["app/pricing.py"]))
+    )
     url = await GitHubPR(_client(fake), sandbox).open(_approved_state())
     assert url == "https://github.com/acme/shop/pull/8"
     writes = [(m, p) for m, p, _ in fake.calls if m == "POST"]
-    assert [p.rsplit("/", 1)[-1] for _, p in writes] == ["blobs", "trees", "commits", "refs", "pulls"]
+    assert [p.rsplit("/", 1)[-1] for _, p in writes] == [
+        "blobs",
+        "trees",
+        "commits",
+        "refs",
+        "pulls",
+    ]
     bodies = {p.rsplit("/", 1)[-1]: b for m, p, b in fake.calls if m == "POST"}
     assert base64.b64decode(bodies["blobs"]["content"]) == b"fixed\n"
     assert bodies["trees"]["base_tree"] == "basetree"
@@ -219,9 +267,13 @@ async def test_open_draft_pr_calls_git_data_api_in_order():
 
 async def test_pr_tree_includes_deletions():
     fake = GitHubFake()
-    sandbox = RawSandboxSpy({"app/new.py": b"n\n"}, _raw(
-        ("100644", "000000", "D", ["app/gone.py"]),
-        ("100644", "100644", "R100", ["app/old.py", "app/new.py"])))
+    sandbox = RawSandboxSpy(
+        {"app/new.py": b"n\n"},
+        _raw(
+            ("100644", "000000", "D", ["app/gone.py"]),
+            ("100644", "100644", "R100", ["app/old.py", "app/new.py"]),
+        ),
+    )
     await GitHubPR(_client(fake), sandbox).open(_approved_state())
     tree = next(b for m, p, b in fake.calls if p.endswith("/git/trees"))["tree"]
     by_path = {e["path"]: e["sha"] for e in tree}
@@ -230,7 +282,10 @@ async def test_pr_tree_includes_deletions():
 
 
 async def test_benchmark_runs_open_no_pr():
-    assert await GitHubPR(_client(GitHubFake()), SandboxSpy()).open(_approved_state(github=None)) is None
+    assert (
+        await GitHubPR(_client(GitHubFake()), SandboxSpy()).open(_approved_state(github=None))
+        is None
+    )
 
 
 def test_git_available_for_import():
@@ -253,8 +308,10 @@ def test_repo_config_cannot_pick_the_agent_image(tmp_path: Path):
 
 def _raw(*entries: tuple[str, str, str, list[str]]) -> str:
     """`git diff --raw -z` lines: (old mode, new mode, status, paths)."""
-    return "".join(f":{old} {new} {'1' * 40} {'0' * 40} {status}\x00" + "".join(p + "\x00" for p in paths)
-                   for old, new, status, paths in entries)
+    return "".join(
+        f":{old} {new} {'1' * 40} {'0' * 40} {status}\x00" + "".join(p + "\x00" for p in paths)
+        for old, new, status, paths in entries
+    )
 
 
 class RawSandboxSpy(SandboxSpy):
@@ -269,8 +326,10 @@ class RawSandboxSpy(SandboxSpy):
 
 async def test_pr_tree_keeps_file_modes():
     fake = GitHubFake()
-    sandbox = RawSandboxSpy({"run.sh": b"#!/bin/sh\n", "app/x.py": b"x\n"}, _raw(
-        ("100644", "100755", "M", ["run.sh"]), ("000000", "100644", "A", ["app/x.py"])))
+    sandbox = RawSandboxSpy(
+        {"run.sh": b"#!/bin/sh\n", "app/x.py": b"x\n"},
+        _raw(("100644", "100755", "M", ["run.sh"]), ("000000", "100644", "A", ["app/x.py"])),
+    )
     await GitHubPR(_client(fake), sandbox).open(_approved_state())
     tree = next(b for m, p, b in fake.calls if p.endswith("/git/trees"))["tree"]
     assert {e["path"]: e["mode"] for e in tree} == {"run.sh": "100755", "app/x.py": "100644"}
@@ -290,7 +349,10 @@ async def test_reopening_after_a_partial_failure_reuses_branch_and_pr():
             if request.method == "POST" and path == "/repos/acme/shop/git/refs":
                 self.calls.append((request.method, path, json.loads(request.content)))
                 return httpx.Response(422, json={"message": "Reference already exists"})
-            if request.method == "PATCH" and path == "/repos/acme/shop/git/refs/heads/repopilot/abcdef12":
+            if (
+                request.method == "PATCH"
+                and path == "/repos/acme/shop/git/refs/heads/repopilot/abcdef12"
+            ):
                 self.calls.append((request.method, path, json.loads(request.content)))
                 return httpx.Response(200, json={})
             if request.method == "POST" and path == "/repos/acme/shop/pulls":
@@ -298,14 +360,96 @@ async def test_reopening_after_a_partial_failure_reuses_branch_and_pr():
                 return httpx.Response(422, json={"message": "A pull request already exists"})
             if request.method == "GET" and path == "/repos/acme/shop/pulls":
                 self.calls.append((request.method, path, dict(request.url.params)))
-                return httpx.Response(200, json=[{"html_url": "https://github.com/acme/shop/pull/8"}])
+                return httpx.Response(
+                    200, json=[{"html_url": "https://github.com/acme/shop/pull/8"}]
+                )
             return super().__call__(request)
 
     fake = Retried()
-    sandbox = RawSandboxSpy({"app/pricing.py": b"fixed\n"}, _raw(("100644", "100644", "M", ["app/pricing.py"])))
+    sandbox = RawSandboxSpy(
+        {"app/pricing.py": b"fixed\n"}, _raw(("100644", "100644", "M", ["app/pricing.py"]))
+    )
     url = await GitHubPR(_client(fake), sandbox).open(_approved_state())
     assert url == "https://github.com/acme/shop/pull/8"
     patch = next(b for m, p, b in fake.calls if m == "PATCH")
     assert patch == {"sha": "newcommit", "force": True}
     query = next(b for m, p, b in fake.calls if m == "GET" and p.endswith("/pulls"))
     assert query["head"] == "acme:repopilot/abcdef12"
+
+
+async def test_rate_limits_are_told_apart_from_missing_permissions():
+    from repopilot.github.client import GitHubError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        number = request.url.path.rsplit("/", 1)[-1]
+        if number == "1":  # primary rate limit
+            return httpx.Response(
+                403,
+                json={"message": "API rate limit exceeded for user."},
+                headers={"x-ratelimit-remaining": "0"},
+            )
+        if number == "2":  # a fine-grained token without the permission
+            return httpx.Response(
+                403,
+                json={"message": "Resource not accessible by personal access token"},
+                headers={"x-ratelimit-remaining": "4999"},
+            )
+        if number == "3":  # secondary rate limit
+            return httpx.Response(
+                403, json={"message": "You have exceeded a secondary rate limit."}
+            )
+        return httpx.Response(
+            429, json={"message": "Too many requests"}, headers={"retry-after": "60"}
+        )
+
+    client = GitHubClient(TOKEN, "https://api.github.test", transport=httpx.MockTransport(handler))
+    for number, limited in ((1, True), (2, False), (3, True), (4, True)):
+        with pytest.raises(GitHubError) as info:
+            await client.get_issue("acme/shop", number)
+        assert info.value.rate_limited is limited, number
+
+
+def test_repo_config_test_command_must_be_one_the_sandbox_runs(tmp_path: Path):
+    (tmp_path / ".repopilot.yml").write_text("test_command: [npm, test]\n")
+    with pytest.raises(WorkspaceError, match="test_command") as info:
+        load_repo_config(tmp_path)
+    assert "'npm'" in str(info.value) and "pytest" in str(info.value)
+    for ok in ("[pytest, -q]", "[python, -m, pytest]", "[python3, -m, unittest]"):
+        (tmp_path / ".repopilot.yml").write_text(f"test_command: {ok}\n")
+        assert load_repo_config(tmp_path).test_command[0] in ("pytest", "python", "python3")
+
+
+def test_sandbox_command_allowlist_matches_sandbox_svc():
+    import re
+
+    from repopilot.config import REPO_ROOT
+    from repopilot.sandbox_client import SANDBOX_COMMANDS
+
+    policy = REPO_ROOT / "services" / "sandbox-svc" / "internal" / "sandbox" / "policy.go"
+    if not policy.is_file():
+        pytest.skip("sandbox-svc sources are not in this checkout")
+    block = re.search(
+        r"var allowedCommands = map\[string\]bool\{(.*?)\n\}", policy.read_text(), re.DOTALL
+    )
+    assert block is not None
+    assert set(re.findall(r'"([^"]+)": true', block.group(1))) == SANDBOX_COMMANDS
+
+
+async def test_workspace_hook_sees_the_imported_repo_before_the_sandbox():
+    root = "acme-shop-aaaaaaa/"
+    fake = GitHubFake(_tarball([_dir(root), _file(root + "app/main.py")]))
+    sandbox = SandboxSpy()
+    seen = []
+
+    async def hook(workspace: Path) -> None:
+        seen.append((workspace / "app" / "main.py").read_bytes())
+        assert sandbox.seen == []  # before any sandbox exists
+
+    await prepare_github_run(
+        {"issue_ref": "acme/shop#7"},
+        run_id="run-1",
+        github=_client(fake),
+        sandbox=sandbox,
+        on_workspace=hook,
+    )
+    assert seen == [b"x = 1\n"]

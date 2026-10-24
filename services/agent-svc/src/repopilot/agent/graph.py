@@ -1,11 +1,11 @@
 """The agent state machine.
 
-    intake -> llm <-> tools          explore: read tools + submit_plan; edit: all + finish
-              |  \\-> nudge -> llm    (text-only replies, at most three in a row)
-              |       tools --finish--> validate --pass--> request_review -> approval
-              |                            |  \\--fail--> diagnose -> llm (bounded retries)
-              \\--budget--> fail <---------+     approval --approve--> open_pr -> record
-                              \\-> record -> END   approval --reject+comment--> llm (once)
+intake -> llm <-> tools          explore: read tools + submit_plan; edit: all + finish
+          |  \\-> nudge -> llm    (text-only replies, at most three in a row)
+          |       tools --finish--> validate --pass--> request_review -> approval
+          |                            |  \\--fail--> diagnose -> llm (bounded retries)
+          \\--budget--> fail <---------+     approval --approve--> open_pr -> record
+                          \\-> record -> END   approval --reject+comment--> llm (once)
 """
 
 from langgraph.graph import END, START, StateGraph

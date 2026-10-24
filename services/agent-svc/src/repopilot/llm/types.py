@@ -23,7 +23,11 @@ class AssistantMessage(BaseModel):
         msg: dict = {"role": "assistant", "content": self.content}
         if self.tool_calls:
             msg["tool_calls"] = [
-                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+                {
+                    "id": c.id,
+                    "type": "function",
+                    "function": {"name": c.name, "arguments": c.arguments},
+                }
                 for c in self.tool_calls
             ]
         return msg
@@ -41,9 +45,14 @@ class ToolSpec(BaseModel):
     parameters: dict  # JSON schema of the arguments object
 
     def to_openai(self) -> dict:
-        return {"type": "function", "function": {
-            "name": self.name, "description": self.description, "parameters": self.parameters,
-        }}
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
 
 
 def cost_usd(usage: Usage, price_in: float, price_out: float) -> float:

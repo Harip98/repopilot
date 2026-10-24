@@ -26,32 +26,53 @@ def pr_body(state: RunState) -> str:
     if state.plan:
         lines += ["### Diagnosis", state.plan.root_cause, ""]
         if state.plan.acceptance_criteria:
-            lines += ["### Acceptance criteria"] + [f"- {c}" for c in state.plan.acceptance_criteria]
+            lines += ["### Acceptance criteria"] + [
+                f"- {c}" for c in state.plan.acceptance_criteria
+            ]
             lines.append("")
     if tests is not None:
-        lines += ["### Validation", (f"`{' '.join(state.test_command)}` exited with "
-                  f"{tests.exit_code} in an isolated sandbox.")]
+        lines += [
+            "### Validation",
+            (
+                f"`{' '.join(state.test_command)}` exited with "
+                f"{tests.exit_code} in an isolated sandbox."
+            ),
+        ]
         if state.baseline_tests_passed:
-            lines.append("Note: the suite also passed before this change, so review the diff "
-                         "against the issue rather than relying on green tests alone.")
+            lines.append(
+                "Note: the suite also passed before this change, so review the diff "
+                "against the issue rather than relying on green tests alone."
+            )
         lines.append("")
     approver = state.approval.by if state.approval else "a reviewer"
-    lines += [f"Fixes #{gh.issue_number}", "",
-              (f"---\nOpened as a draft by RepoPilot after approval by {approver} "
-              f"(run `{state.run_id}`).")]
+    lines += [
+        f"Fixes #{gh.issue_number}",
+        "",
+        (
+            f"---\nOpened as a draft by RepoPilot after approval by {approver} "
+            f"(run `{state.run_id}`)."
+        ),
+    ]
     return "\n".join(lines)
 
 
-async def _tree_entries(state: RunState, sandbox: SandboxClient, github: GitHubClient) -> list[dict]:
+async def _tree_entries(
+    state: RunState, sandbox: SandboxClient, github: GitHubClient
+) -> list[dict]:
     sid, repo = state.sandbox_id, state.github.repo
     await sandbox.exec(sid, ["git", "add", "--intent-to-add", "--all"])
     out = (await sandbox.exec(sid, ["git", "diff", "HEAD", "--raw", "-M", "-z"])).stdout
     changes = raw_entries(out)
-    odd = [paths[-1] for status, mode, paths in changes
-           if not status.startswith("D") and mode not in _FILE_MODES]
+    odd = [
+        paths[-1]
+        for status, mode, paths in changes
+        if not status.startswith("D") and mode not in _FILE_MODES
+    ]
     if odd:
-        raise PRError(f"the change adds symlinks or submodules ({', '.join(odd)}); "
-                      "open this pull request by hand")
+        raise PRError(
+            f"the change adds symlinks or submodules ({', '.join(odd)}); "
+            "open this pull request by hand"
+        )
     entries: list[dict] = []
 
     def delete(path: str) -> None:
@@ -96,8 +117,9 @@ class GitHubPR:
             # Left by an earlier attempt of this run: the branch is ours, point it at the commit.
             await self.github.update_ref(gh.repo, f"heads/{branch}", commit)
         try:
-            return await self.github.create_pull(gh.repo, title=title, head=branch,
-                                                 base=gh.base_branch, body=pr_body(state))
+            return await self.github.create_pull(
+                gh.repo, title=title, head=branch, base=gh.base_branch, body=pr_body(state)
+            )
         except GitHubError as exc:
             if exc.status != 422 or not (url := await self.github.find_pull(gh.repo, branch)):
                 raise

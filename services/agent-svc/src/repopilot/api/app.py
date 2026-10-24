@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from repopilot.api.repo import RunsRepo
@@ -95,6 +95,16 @@ class CreateRun(BaseModel):
 class Decision(BaseModel):
     decision: Literal["approve", "reject"]
     comment: str | None = Field(default=None, max_length=4000)
+    # Who decided, as recorded with the approval and named in the pull request. One line: no
+    # control characters, so it cannot add lines to the PR body.
+    by: str = Field(default="web", min_length=1, max_length=64, pattern=r"^[^\x00-\x1f\x7f]+$")
+
+    @field_validator("by", mode="before")
+    @classmethod
+    def _trimmed(cls, v: Any) -> Any:
+        if v is None:
+            return "web"
+        return v.strip() if isinstance(v, str) else v
 
 
 class ApiError(Exception):
@@ -108,11 +118,15 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
 
 def create_app(services: ApiServices) -> FastAPI:
     # No public schema or docs UI: every route but /healthz needs the token.
-    app = FastAPI(title="RepoPilot", version="0.1.0", docs_url=None, redoc_url=None,
-                  openapi_url=None)
-    app.add_middleware(CORSMiddleware, allow_origins=[services.ui_origin],
-                       allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type",
-                                                                     "Last-Event-ID"])
+    app = FastAPI(
+        title="RepoPilot", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[services.ui_origin],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
+    )
 
     @app.middleware("http")
     async def trace_and_headers(request: Request, call_next: Callable[[Request], Awaitable[Any]]):
@@ -130,7 +144,8 @@ def create_app(services: ApiServices) -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = {401: "unauthorized", 404: "not_found", 405: "method_not_allowed"}.get(
-            exc.status_code, "http_error")
+            exc.status_code, "http_error"
+        )
         return _error(exc.status_code, code, str(exc.detail))
 
     @app.exception_handler(Exception)
@@ -147,7 +162,9 @@ def create_app(services: ApiServices) -> FastAPI:
         except Exception as exc:
             log.exception("could not enqueue %s job for run %s", job["type"], job["run_id"])
             await on_failure()
-            raise ApiError(503, "queue_unavailable", "the job queue is unavailable; try again") from exc
+            raise ApiError(
+                503, "queue_unavailable", "the job queue is unavailable; try again"
+            ) from exc
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -173,15 +190,28 @@ def create_app(services: ApiServices) -> FastAPI:
             if task is None:
                 raise ApiError(422, "unknown_task", f"no benchmark task {body.task_id!r}")
             await services.repo.create_queued_run(
-                run_id, repo=task.repo, issue_text=task.issue, task_id=task.id, issue_ref=None,
-                task_mode="bench", model=model)
+                run_id,
+                repo=task.repo,
+                issue_text=task.issue,
+                task_id=task.id,
+                issue_ref=None,
+                task_mode="bench",
+                model=model,
+            )
         else:
             await services.repo.create_queued_run(
-                run_id, repo=body.repo, issue_text="", task_id=None,
-                issue_ref=f"{body.repo}#{body.issue_number}", task_mode="github", model=model)
-        await enqueue({"type": "start", "run_id": run_id, "auto_approve": body.auto_approve},
-                      lambda: services.claims.status(run_id, "failed",
-                                                     failure_reason="enqueue_failed"))
+                run_id,
+                repo=body.repo,
+                issue_text="",
+                task_id=None,
+                issue_ref=f"{body.repo}#{body.issue_number}",
+                task_mode="github",
+                model=model,
+            )
+        await enqueue(
+            {"type": "start", "run_id": run_id, "auto_approve": body.auto_approve},
+            lambda: services.claims.status(run_id, "failed", failure_reason="enqueue_failed"),
+        )
         return {"run_id": run_id, "status": "queued"}
 
     @app.get("/v1/runs", dependencies=auth)
@@ -204,19 +234,22 @@ def create_app(services: ApiServices) -> FastAPI:
         return {"tool_calls": await services.repo.tool_calls(run_id)}
 
     @app.get("/v1/runs/{run_id}/events", dependencies=auth)
-    async def events(run_id: str, last_event_id: str | None = Header(default=None),
-                     after: int = Query(0, ge=0)) -> StreamingResponse:
+    async def events(
+        run_id: str, last_event_id: str | None = Header(default=None), after: int = Query(0, ge=0)
+    ) -> StreamingResponse:
         await _run_or_404(run_id)
         start = int(last_event_id) if last_event_id and last_event_id.isdigit() else after
 
         async def stream():
             async with services.repo.event_session() as session:
-                async for chunk in run_events(session, run_id, start, poll_s=services.poll_s,
-                                              settle_s=services.settle_s):
+                async for chunk in run_events(
+                    session, run_id, start, poll_s=services.poll_s, settle_s=services.settle_s
+                ):
                     yield chunk
 
-        return StreamingResponse(stream(), media_type="text/event-stream",
-                                 headers={"X-Accel-Buffering": "no"})
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+        )
 
     @app.post("/v1/runs/{run_id}/approval", status_code=202, dependencies=auth)
     async def approval(run_id: str, body: Decision) -> dict:
@@ -225,9 +258,14 @@ def create_app(services: ApiServices) -> FastAPI:
         if await services.claims.claim_for_approval(run_id) is None:
             raise ApiError(409, "not_awaiting_approval", f"run {run_id} is not awaiting approval")
         # If the job cannot be queued, hand the decision back to the reviewer.
-        await enqueue({"type": "resume", "run_id": run_id, "decision": {
-            "decision": body.decision, "comment": body.comment, "by": "web"}},
-            lambda: services.claims.status(run_id, "awaiting_approval"))
+        await enqueue(
+            {
+                "type": "resume",
+                "run_id": run_id,
+                "decision": {"decision": body.decision, "comment": body.comment, "by": body.by},
+            },
+            lambda: services.claims.status(run_id, "awaiting_approval"),
+        )
         return {"run_id": run_id, "status": "running"}
 
     @app.get("/v1/evals", dependencies=auth)
@@ -239,7 +277,10 @@ def create_app(services: ApiServices) -> FastAPI:
         results = await services.results.load(name)
         if not results:
             raise ApiError(404, "not_found", f"no eval {name}")
-        return {"name": name, "summary": summarize(results).model_dump(),
-                "results": [r.model_dump() for r in results]}
+        return {
+            "name": name,
+            "summary": summarize(results).model_dump(),
+            "results": [r.model_dump() for r in results],
+        }
 
     return app

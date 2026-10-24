@@ -14,5 +14,7 @@ class FakeChatModel:
     ) -> ChatResult:
         self.calls.append({"messages": list(messages), "tools": tools, "max_tokens": max_tokens})
         if not self._script:
-            raise AssertionError(f"FakeChatModel script exhausted after {len(self.calls) - 1} calls")
+            raise AssertionError(
+                f"FakeChatModel script exhausted after {len(self.calls) - 1} calls"
+            )
         return self._script.pop(0)

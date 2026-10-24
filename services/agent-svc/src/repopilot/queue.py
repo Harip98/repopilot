@@ -20,8 +20,9 @@ class JobQueue:
         self.stream, self.group = stream, group
         # No socket read timeout: XREADGROUP blocks server-side for block_ms, and redis-py's
         # default (5 s) would cut every idle wait short. Connecting still times out.
-        self._r = redis.from_url(redis_url, decode_responses=True, socket_timeout=None,
-                                 socket_connect_timeout=5)
+        self._r = redis.from_url(
+            redis_url, decode_responses=True, socket_timeout=None, socket_connect_timeout=5
+        )
 
     async def ensure_group(self) -> None:
         try:
@@ -34,8 +35,9 @@ class JobQueue:
         return await self._r.xadd(self.stream, {"job": json.dumps(job)})
 
     async def next(self, consumer: str, block_ms: int = 5000) -> Delivery | None:
-        res = await self._r.xreadgroup(self.group, consumer, {self.stream: ">"}, count=1,
-                                       block=block_ms)
+        res = await self._r.xreadgroup(
+            self.group, consumer, {self.stream: ">"}, count=1, block=block_ms
+        )
         if not res:
             return None
         [(_, [(entry_id, fields)])] = res
@@ -50,17 +52,24 @@ class JobQueue:
 
     async def reclaim(self, consumer: str, min_idle_ms: int, count: int = 10) -> list[Delivery]:
         """Take over entries another consumer read but never acknowledged."""
-        _, entries, _ = await self._r.xautoclaim(self.stream, self.group, consumer, min_idle_ms,
-                                                 start_id="0-0", count=count)
+        _, entries, _ = await self._r.xautoclaim(
+            self.stream, self.group, consumer, min_idle_ms, start_id="0-0", count=count
+        )
         out = []
         for entry_id, fields in entries:
             if fields is None:  # trimmed from the stream; nothing left to run
                 await self.ack(entry_id)
                 continue
-            [pending] = await self._r.xpending_range(self.stream, self.group, min=entry_id,
-                                                     max=entry_id, count=1)
-            out.append(Delivery(id=entry_id, job=json.loads(fields["job"]),
-                                deliveries=pending["times_delivered"]))
+            [pending] = await self._r.xpending_range(
+                self.stream, self.group, min=entry_id, max=entry_id, count=1
+            )
+            out.append(
+                Delivery(
+                    id=entry_id,
+                    job=json.loads(fields["job"]),
+                    deliveries=pending["times_delivered"],
+                )
+            )
         return out
 
     async def drop(self) -> None:

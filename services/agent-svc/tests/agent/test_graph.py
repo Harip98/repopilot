@@ -14,25 +14,40 @@ from tests.fakes import ScriptedSandbox, text_reply, tool_reply
 pytestmark = pytest.mark.anyio
 
 STORE = b"def matches(status, wanted):\n    return status == wanted\n"
-PLAN = {"root_cause": "case-sensitive compare", "files": ["app/store.py"],
-        "acceptance_criteria": ["PAID matches paid"], "test_targets": ["tests"]}
+PLAN = {
+    "root_cause": "case-sensitive compare",
+    "files": ["app/store.py"],
+    "acceptance_criteria": ["PAID matches paid"],
+    "test_targets": ["tests"],
+}
 
 
 def explore_and_edit() -> list:
     return [
         tool_reply("read_file", path="app/store.py"),
         tool_reply("submit_plan", **PLAN),
-        tool_reply("replace_text", path="app/store.py", old="status == wanted",
-                   new="status.lower() == wanted.lower()"),
+        tool_reply(
+            "replace_text",
+            path="app/store.py",
+            old="status == wanted",
+            new="status.lower() == wanted.lower()",
+        ),
         tool_reply("finish", summary="compare case-insensitively"),
     ]
 
 
 def make_state(**kw) -> RunState:
-    base = {"run_id": "run-1", "task_id": "orders-api-005", "repo": "orders-api",
-            "issue_title": "Status filter is case-sensitive", "issue_text": "PAID finds nothing",
-            "sandbox_id": "0123456789abcdef", "test_command": ["pytest", "-q"],
-            "protected_paths": ["tests/test_heldout_*"], "started_at": 0.0}
+    base = {
+        "run_id": "run-1",
+        "task_id": "orders-api-005",
+        "repo": "orders-api",
+        "issue_title": "Status filter is case-sensitive",
+        "issue_text": "PAID finds nothing",
+        "sandbox_id": "0123456789abcdef",
+        "test_command": ["pytest", "-q"],
+        "protected_paths": ["tests/test_heldout_*"],
+        "started_at": 0.0,
+    }
     return RunState(**(base | kw))
 
 
@@ -46,18 +61,27 @@ class Harness:
 
     def deps(self, script: list) -> RunDeps:
         self.llm = FakeChatModel(script)
-        return RunDeps(llm=self.llm, sandbox=self.sandbox, registry=build_registry(),
-                       recorder=self.recorder, pr=NoPR(), clock=lambda: self.now)
+        return RunDeps(
+            llm=self.llm,
+            sandbox=self.sandbox,
+            registry=build_registry(),
+            recorder=self.recorder,
+            pr=NoPR(),
+            clock=lambda: self.now,
+        )
 
     async def start(self, script: list, **state_kw) -> dict:
         state = make_state(**state_kw)
-        return await self.graph.ainvoke(state, {"configurable": {"thread_id": state.run_id}},
-                                        context=self.deps(script))
+        return await self.graph.ainvoke(
+            state, {"configurable": {"thread_id": state.run_id}}, context=self.deps(script)
+        )
 
     async def resume(self, value: dict, script: list | None = None, run_id: str = "run-1") -> dict:
-        return await self.graph.ainvoke(Command(resume=value),
-                                        {"configurable": {"thread_id": run_id}},
-                                        context=self.deps(script or []))
+        return await self.graph.ainvoke(
+            Command(resume=value),
+            {"configurable": {"thread_id": run_id}},
+            context=self.deps(script or []),
+        )
 
 
 async def test_happy_path():
@@ -88,7 +112,9 @@ async def test_test_failure_diagnose_then_fix():
     out = await h.start(script, auto_approve=True)
     final = RunState.model_validate(out)
     assert final.status == "completed" and final.retries == 1
-    diagnose = [m for m in final.messages if m["role"] == "user" and "Validation failed" in m["content"]]
+    diagnose = [
+        m for m in final.messages if m["role"] == "user" and "Validation failed" in m["content"]
+    ]
     assert len(diagnose) == 1 and "AssertionError" in diagnose[0]["content"]
 
 
@@ -97,7 +123,8 @@ async def test_retries_exhausted_fails():
     h.sandbox.test_results = [(1, "boom")] * 3
     script = explore_and_edit() + [tool_reply("finish", summary="again")] * 2
     final = RunState.model_validate(
-        await h.start(script, auto_approve=True, budget=Budget(max_retries=2)))
+        await h.start(script, auto_approve=True, budget=Budget(max_retries=2))
+    )
     assert final.status == "failed" and final.failure_reason == "tests_failing"
     assert final.retries == 2
 
@@ -105,7 +132,8 @@ async def test_retries_exhausted_fails():
 async def test_budget_exhausted():
     h = Harness()
     final = RunState.model_validate(
-        await h.start(explore_and_edit(), budget=Budget(max_llm_calls=3)))
+        await h.start(explore_and_edit(), budget=Budget(max_llm_calls=3))
+    )
     assert final.status == "failed" and final.failure_reason == "budget:llm_calls"
     assert h.recorder.statuses[-1][0] == "failed"
 
@@ -155,8 +183,11 @@ async def test_finish_without_changes():
     ]
     final = RunState.model_validate(await h.start(script, auto_approve=True))
     assert final.status == "completed" and final.retries == 1
-    assert any("not changed any files" in m.get("content") or "" for m in final.messages
-               if m["role"] == "user")
+    assert any(
+        "not changed any files" in m.get("content") or ""
+        for m in final.messages
+        if m["role"] == "user"
+    )
 
 
 async def test_validate_rejects_protected_changes():
@@ -171,14 +202,21 @@ async def test_validate_rejects_protected_changes():
 async def test_reject_with_comment_revises_once():
     h = Harness()
     await h.start(explore_and_edit())
-    revise = [tool_reply("replace_text", path="app/store.py", old="status.lower() == wanted.lower()",
-                         new="status.casefold() == wanted.casefold()"),
-              tool_reply("finish", summary="casefold")]
+    revise = [
+        tool_reply(
+            "replace_text",
+            path="app/store.py",
+            old="status.lower() == wanted.lower()",
+            new="status.casefold() == wanted.casefold()",
+        ),
+        tool_reply("finish", summary="casefold"),
+    ]
     out = await h.resume({"decision": "reject", "comment": "use casefold", "by": "bob"}, revise)
     assert "__interrupt__" in out
     assert any("use casefold" in (m.get("content") or "") for m in out["messages"])
     final = RunState.model_validate(
-        await h.resume({"decision": "reject", "comment": "still no", "by": "bob"}))
+        await h.resume({"decision": "reject", "comment": "still no", "by": "bob"})
+    )
     assert final.status == "rejected" and final.revisions == 1
 
 
@@ -191,8 +229,11 @@ async def test_resume_after_crash():
     assert [c.tool for c in first.recorder.tool_calls] == ["read_file", "replace_text"]
 
     second = Harness(sandbox=first.sandbox, saver=saver)
-    out = await second.graph.ainvoke(None, {"configurable": {"thread_id": "run-1"}},
-                                     context=second.deps([tool_reply("finish", summary="done")]))
+    out = await second.graph.ainvoke(
+        None,
+        {"configurable": {"thread_id": "run-1"}},
+        context=second.deps([tool_reply("finish", summary="done")]),
+    )
     final = RunState.model_validate(out)
     assert final.status == "completed"
     assert second.recorder.tool_calls == []  # nothing before the crash was re-run
@@ -209,8 +250,11 @@ async def test_auto_approve_skips_interrupt():
 
 # --- validate against real git (review C1/I6) ---------------------------------------------
 
-GIT_FILES = {"app/store.py": STORE, "tests/test_store.py": b"def test_x():\n    pass\n",
-             "tests/conftest.py": b"import pytest\n"}
+GIT_FILES = {
+    "app/store.py": STORE,
+    "tests/test_store.py": b"def test_x():\n    pass\n",
+    "tests/conftest.py": b"import pytest\n",
+}
 PROTECTED = ["tests/test_heldout_*", "conftest.py", "*/conftest.py"]
 
 
@@ -222,10 +266,15 @@ def git_harness(tmp_path) -> Harness:
 
 async def test_validate_sees_deletions(tmp_path):
     h = git_harness(tmp_path)
-    delete = ("diff --git a/tests/test_store.py b/tests/test_store.py\ndeleted file mode 100644\n"
-              "--- a/tests/test_store.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-def test_x():\n-    pass\n")
-    script = [tool_reply("submit_plan", **PLAN), tool_reply("apply_patch", patch=delete),
-              tool_reply("finish", summary="removed a test")]
+    delete = (
+        "diff --git a/tests/test_store.py b/tests/test_store.py\ndeleted file mode 100644\n"
+        "--- a/tests/test_store.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-def test_x():\n-    pass\n"
+    )
+    script = [
+        tool_reply("submit_plan", **PLAN),
+        tool_reply("apply_patch", patch=delete),
+        tool_reply("finish", summary="removed a test"),
+    ]
     out = await h.start(script, protected_paths=PROTECTED)
     payload = out["__interrupt__"][0].value
     assert "deleted file mode" in payload["diff"] and "tests/test_store.py" in payload["diff"]
@@ -233,9 +282,13 @@ async def test_validate_sees_deletions(tmp_path):
 
 async def test_validate_rejects_protected_rename_by_test_code(tmp_path):
     h = git_harness(tmp_path)
-    h.sandbox.on_test = lambda root: (root / "tests" / "conftest.py").rename(root / "tests" / "moved.py")
+    h.sandbox.on_test = lambda root: (root / "tests" / "conftest.py").rename(
+        root / "tests" / "moved.py"
+    )
     script = explore_and_edit()
-    final = RunState.model_validate(await h.start(script, protected_paths=PROTECTED, auto_approve=True))
+    final = RunState.model_validate(
+        await h.start(script, protected_paths=PROTECTED, auto_approve=True)
+    )
     assert final.status == "failed" and final.failure_reason == "protected_paths_changed"
     assert "tests/conftest.py" in final.last_tests.violations
 
@@ -248,7 +301,8 @@ async def test_validate_sees_ignored_files(tmp_path):
     h = git_harness(tmp_path)
     h.sandbox.on_test = plant
     final = RunState.model_validate(
-        await h.start(explore_and_edit(), protected_paths=PROTECTED, auto_approve=True))
+        await h.start(explore_and_edit(), protected_paths=PROTECTED, auto_approve=True)
+    )
     assert final.status == "failed" and "conftest.py" in final.last_tests.violations
 
 
@@ -258,14 +312,18 @@ async def test_validate_sees_ignored_files(tmp_path):
 async def test_one_turn_cannot_exceed_tool_budget():
     from repopilot.llm import AssistantMessage, ChatResult, ToolCall, Usage
 
-    calls = [ToolCall(id=f"c{i}", name="read_file", arguments='{"path": "app/store.py"}')
-             for i in range(30)]
+    calls = [
+        ToolCall(id=f"c{i}", name="read_file", arguments='{"path": "app/store.py"}')
+        for i in range(30)
+    ]
     burst = ChatResult(message=AssistantMessage(tool_calls=calls), usage=Usage())
     h = Harness()
     final = RunState.model_validate(await h.start([burst], budget=Budget(max_tool_calls=5)))
-    assert len(h.recorder.tool_calls) == 5
+    assert len([c for c in h.recorder.tool_calls if not c.refused]) == 5
     assert final.status == "failed" and final.failure_reason == "budget:tool_calls"
-    skipped = [m for m in final.messages if m["role"] == "tool" and "budget exhausted" in m["content"]]
+    skipped = [
+        m for m in final.messages if m["role"] == "tool" and "budget exhausted" in m["content"]
+    ]
     assert len(skipped) == 25
 
 
@@ -273,9 +331,15 @@ async def test_review_wait_not_counted_against_time_budget():
     h = Harness()
     await h.start(explore_and_edit(), budget=Budget(max_seconds=100))
     h.now = 5000.0  # the reviewer answered over an hour later
-    revise = [tool_reply("replace_text", path="app/store.py", old="status.lower() == wanted.lower()",
-                         new="status.casefold() == wanted.casefold()"),
-              tool_reply("finish", summary="casefold")]
+    revise = [
+        tool_reply(
+            "replace_text",
+            path="app/store.py",
+            old="status.lower() == wanted.lower()",
+            new="status.casefold() == wanted.casefold()",
+        ),
+        tool_reply("finish", summary="casefold"),
+    ]
     out = await h.resume({"decision": "reject", "comment": "use casefold", "by": "bob"}, revise)
     assert "__interrupt__" in out, out.get("failure_reason")
     assert b"casefold" in h.sandbox.files["app/store.py"]
@@ -337,9 +401,14 @@ async def test_intake_includes_listing():
 async def test_nudges_are_consecutive():
     """Stray empty replies spread over a run must not end it; only a streak does."""
     h = Harness()
-    script = [text_reply(""), tool_reply("read_file", path="app/store.py"),
-              text_reply(""), tool_reply("submit_plan", **PLAN),
-              text_reply(""), *explore_and_edit()[2:]]
+    script = [
+        text_reply(""),
+        tool_reply("read_file", path="app/store.py"),
+        text_reply(""),
+        tool_reply("submit_plan", **PLAN),
+        text_reply(""),
+        *explore_and_edit()[2:],
+    ]
     final = RunState.model_validate(await h.start(script, auto_approve=True))
     assert final.status == "completed", final.failure_reason
 
@@ -383,8 +452,9 @@ async def test_pr_that_cannot_be_built_fails_the_run_with_a_reason():
     h = Harness()
     deps = h.deps(explore_and_edit())
     deps.pr = Refusing()
-    out = await h.graph.ainvoke(make_state(auto_approve=True),
-                                {"configurable": {"thread_id": "run-1"}}, context=deps)
+    out = await h.graph.ainvoke(
+        make_state(auto_approve=True), {"configurable": {"thread_id": "run-1"}}, context=deps
+    )
     final = RunState.model_validate(out)
     assert final.status == "failed" and final.failure_reason.startswith("pr_error: ")
     assert h.recorder.statuses[-1][0] == "failed"

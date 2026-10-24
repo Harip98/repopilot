@@ -12,19 +12,30 @@ def make_task(root: Path, task_id: str, body: bytes = b"print(1)\n") -> Task:
     (task_dir / "heldout").mkdir(parents=True, exist_ok=True)
     (task_dir / "task.yaml").write_bytes(b"id: x\n")
     (task_dir / "heldout" / "test_h.py").write_bytes(b"def test(): pass\n")
-    return Task(id=task_id, repo="demo", title="t", issue="i", difficulty="simple", split="test",
-                test_command=["pytest"], heldout_command=["pytest"], expected_files=["app.py"],
-                dir=task_dir)
+    return Task(
+        id=task_id,
+        repo="demo",
+        title="t",
+        issue="i",
+        difficulty="simple",
+        split="test",
+        test_command=["pytest"],
+        heldout_command=["pytest"],
+        expected_files=["app.py"],
+        dir=task_dir,
+    )
 
 
 def test_split_hash_stable(tmp_path: Path):
     lf = make_task(tmp_path / "a", "demo-001", b"x = 1\ny = 2\n")
     crlf = make_task(tmp_path / "b", "demo-001", b"x = 1\r\ny = 2\r\n")
     assert task_hash(lf, repos_root=tmp_path / "a" / "repos") == task_hash(
-        crlf, repos_root=tmp_path / "b" / "repos")
+        crlf, repos_root=tmp_path / "b" / "repos"
+    )
     other = make_task(tmp_path / "c", "demo-001", b"x = 1\ny = 3\n")
     assert task_hash(other, repos_root=tmp_path / "c" / "repos") != task_hash(
-        lf, repos_root=tmp_path / "a" / "repos")
+        lf, repos_root=tmp_path / "a" / "repos"
+    )
 
 
 def test_frozen_split_guard(tmp_path: Path):
@@ -38,11 +49,29 @@ def test_frozen_split_guard(tmp_path: Path):
     (tasks[1].dir / "heldout" / "test_h.py").write_bytes(b"def test(): assert 0\n")
     extra = make_task(tmp_path, "demo-003")
     problems = check_frozen([tasks[1], extra], freeze, repos_root=repos)
-    assert problems == ["demo-002: changed since freeze", "demo-003: not in the frozen split",
-                        "demo-001: frozen but missing"]
+    assert problems == [
+        "demo-002: changed since freeze",
+        "demo-003: not in the frozen split",
+        "demo-001: frozen but missing",
+    ]
 
     (repos / "demo" / "app.py").write_bytes(b"changed\n")  # the fixture repo is hashed too
     assert "demo-001: changed since freeze" in check_frozen(tasks, freeze, repos_root=repos)
+
+
+def test_a_selection_of_test_tasks_is_checked_against_the_freeze(tmp_path: Path):
+    repos = tmp_path / "repos"
+    freeze = tmp_path / "test_split.sha256"
+    tasks = [make_task(tmp_path, "demo-001"), make_task(tmp_path, "demo-002")]
+    write_freeze(tasks, freeze, repos_root=repos)
+    # Running only some test tasks: the rest of the split is not "missing".
+    assert check_frozen(tasks[:1], freeze, repos_root=repos, subset=True) == []
+    (tasks[0].dir / "heldout" / "test_h.py").write_bytes(b"def test(): assert 0\n")
+    extra = make_task(tmp_path, "demo-003")
+    assert check_frozen([tasks[0], extra], freeze, repos_root=repos, subset=True) == [
+        "demo-001: changed since freeze",
+        "demo-003: not in the frozen split",
+    ]
 
 
 def test_sandbox_images_are_hashed(tmp_path: Path):

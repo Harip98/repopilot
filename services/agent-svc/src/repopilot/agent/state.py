@@ -6,10 +6,22 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Phase = Literal["explore", "edit"]
-Route = Literal["llm", "tools", "nudge", "validate", "diagnose", "request_review", "approval",
-                "open_pr", "fail", "record", "end"]
-RunStatus = Literal["running", "awaiting_approval", "approved", "rejected", "pr_opened",
-                    "completed", "failed"]
+Route = Literal[
+    "llm",
+    "tools",
+    "nudge",
+    "validate",
+    "diagnose",
+    "request_review",
+    "approval",
+    "open_pr",
+    "fail",
+    "record",
+    "end",
+]
+RunStatus = Literal[
+    "running", "awaiting_approval", "approved", "rejected", "pr_opened", "completed", "failed"
+]
 
 
 class Plan(BaseModel):
@@ -81,6 +93,7 @@ class RunState(BaseModel):
     phase: Phase = "explore"
     route: Route = "llm"
     messages: list[dict] = Field(default_factory=list)
+    offered_tools: list[str] = Field(default_factory=list)  # what the last reply could call
     plan: Plan | None = None
     summary: str | None = None
     finish_called: bool = False
@@ -103,10 +116,12 @@ class RunState(BaseModel):
     pr_url: str | None = None
 
 
-def budget_exceeded(state: RunState, now: float) -> str | None:
-    """The first budget that leaves no room for another step, or None."""
+def budget_exceeded(state: RunState, now: float, *, llm_calls: bool = True) -> str | None:
+    """The first budget that leaves no room for another step, or None. The tools node passes
+    llm_calls=False: usage already counts the model call whose reply it runs, a call that was
+    within budget when it was made."""
     u, b = state.usage, state.budget
-    if u.llm_calls >= b.max_llm_calls:
+    if llm_calls and u.llm_calls >= b.max_llm_calls:
         return "llm_calls"
     if u.tool_calls >= b.max_tool_calls:
         return "tool_calls"

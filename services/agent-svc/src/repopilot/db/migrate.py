@@ -52,7 +52,9 @@ def apply_migrations(conn: psycopg.Connection, migrations_dir: Path = MIGRATIONS
             " version text PRIMARY KEY, sha256 text NOT NULL,"
             " applied_at timestamptz NOT NULL DEFAULT now())"
         )
-        applied = dict(conn.execute("SELECT version, sha256 FROM public.schema_migrations").fetchall())
+        applied = dict(
+            conn.execute("SELECT version, sha256 FROM public.schema_migrations").fetchall()
+        )
         check_checksums(migrations_dir, applied)
         newly_applied = []
         for version, path in discover(migrations_dir):
@@ -60,8 +62,10 @@ def apply_migrations(conn: psycopg.Connection, migrations_dir: Path = MIGRATIONS
                 continue
             with conn.transaction():
                 conn.execute(path.read_bytes().decode("utf-8"))
-                conn.execute("INSERT INTO public.schema_migrations (version, sha256) VALUES (%s, %s)",
-                             (version, _sha(path)))
+                conn.execute(
+                    "INSERT INTO public.schema_migrations (version, sha256) VALUES (%s, %s)",
+                    (version, _sha(path)),
+                )
             newly_applied.append(version)
         return newly_applied
     finally:

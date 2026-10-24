@@ -1,5 +1,5 @@
 """Hybrid code search: Postgres full-text and pgvector similarity, fused with reciprocal rank
-fusion (the same retrieval approach as ind-agent, applied to source code).
+fusion (a common retrieval recipe for documents, applied here to source code).
 
 ripgrep remains the agent's primary search: it is exact and fast. This index helps with
 questions phrased in the issue's words ("where are discounts applied?") rather than the
@@ -17,8 +17,27 @@ from repopilot.llm.embeddings import Embedder
 WINDOW, OVERLAP = 40, 10
 MAX_FILE_BYTES = 200_000
 SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules", ".pytest_cache", ".ruff_cache"}
-TEXT_SUFFIXES = {".py", ".md", ".txt", ".toml", ".yml", ".yaml", ".json", ".cfg", ".ini", ".js",
-                 ".ts", ".tsx", ".go", ".rs", ".java", ".sql", ".sh", ".html", ".css"}
+TEXT_SUFFIXES = {
+    ".py",
+    ".md",
+    ".txt",
+    ".toml",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".cfg",
+    ".ini",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".sql",
+    ".sh",
+    ".html",
+    ".css",
+}
 RRF_K = 60
 
 
@@ -44,8 +63,12 @@ def chunk_repo(root: Path) -> list[Chunk]:
     chunks: list[Chunk] = []
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
-        if (not path.is_file() or SKIP_DIRS.intersection(rel.parts)
-                or path.suffix not in TEXT_SUFFIXES or path.stat().st_size > MAX_FILE_BYTES):
+        if (
+            not path.is_file()
+            or SKIP_DIRS.intersection(rel.parts)
+            or path.suffix not in TEXT_SUFFIXES
+            or path.stat().st_size > MAX_FILE_BYTES
+        ):
             continue
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
@@ -53,7 +76,7 @@ def chunk_repo(root: Path) -> list[Chunk]:
             continue
         step = WINDOW - OVERLAP
         for start in range(0, max(len(lines), 1), step):
-            window = lines[start:start + WINDOW]
+            window = lines[start : start + WINDOW]
             if not any(line.strip() for line in window):
                 continue
             chunks.append(Chunk(rel.as_posix(), start + 1, start + len(window), "\n".join(window)))
@@ -90,8 +113,10 @@ class CodeIndex:
                 await cur.executemany(
                     "INSERT INTO code_chunks (index_key, path, start_line, end_line, content, embedding)"
                     " VALUES (%s, %s, %s, %s, %s, %s::vector)",
-                    [(key, c.path, c.start_line, c.end_line, c.content, _vector(v))
-                     for c, v in zip(chunks, vectors, strict=True)],
+                    [
+                        (key, c.path, c.start_line, c.end_line, c.content, _vector(v))
+                        for c, v in zip(chunks, vectors, strict=True)
+                    ],
                 )
             await conn.commit()
         return len(chunks)
@@ -102,23 +127,66 @@ class CodeIndex:
             # OR of the query's words: questions are phrased in prose, and requiring every
             # word (websearch_to_tsquery's AND) would leave the lexical half empty.
             words = re.findall(r"[a-z0-9]+", query.lower())
-            lexical = [] if not words else await (await conn.execute(
-                "SELECT id FROM code_chunks WHERE index_key = %s AND tsv @@ to_tsquery('simple', %s)"
-                " ORDER BY ts_rank_cd(tsv, to_tsquery('simple', %s)) DESC LIMIT 30",
-                (key, " | ".join(words), " | ".join(words)))).fetchall()
-            semantic = await (await conn.execute(
-                "SELECT id FROM code_chunks WHERE index_key = %s"
-                " ORDER BY embedding <=> %s::vector LIMIT 30", (key, _vector(qvec)))).fetchall()
+            lexical = (
+                []
+                if not words
+                else await (
+                    await conn.execute(
+                        "SELECT id FROM code_chunks WHERE index_key = %s AND tsv @@ to_tsquery('simple', %s)"
+                        " ORDER BY ts_rank_cd(tsv, to_tsquery('simple', %s)) DESC LIMIT 30",
+                        (key, " | ".join(words), " | ".join(words)),
+                    )
+                ).fetchall()
+            )
+            semantic = await (
+                await conn.execute(
+                    "SELECT id FROM code_chunks WHERE index_key = %s"
+                    " ORDER BY embedding <=> %s::vector LIMIT 30",
+                    (key, _vector(qvec)),
+                )
+            ).fetchall()
             fused = rrf([r[0] for r in lexical], [r[0] for r in semantic])
             top = sorted(fused, key=fused.get, reverse=True)[:k]
             if not top:
                 return []
-            rows = await (await conn.execute(
-                "SELECT id, path, start_line, end_line, content FROM code_chunks WHERE id = ANY(%s)",
-                (top,))).fetchall()
+            rows = await (
+                await conn.execute(
+                    "SELECT id, path, start_line, end_line, content FROM code_chunks WHERE id = ANY(%s)",
+                    (top,),
+                )
+            ).fetchall()
         by_id = {r[0]: r for r in rows}
         return [Hit(by_id[i][1], by_id[i][2], by_id[i][3], by_id[i][4], fused[i]) for i in top]
 
     async def drop(self, key: str) -> None:
         async with await psycopg.AsyncConnection.connect(self._dsn, autocommit=True) as conn:
             await conn.execute("DELETE FROM code_chunks WHERE index_key = %s", (key,))
+
+    async def exists(self, key: str) -> bool:
+        async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM code_chunks WHERE index_key = %s LIMIT 1", (key,)
+            )
+            return await cur.fetchone() is not None
+
+    def for_run(self, run_id: str) -> "RunIndex":
+        return RunIndex(self, run_id)
+
+
+@dataclass(frozen=True)
+class RunIndex:
+    """One run's slice of the index: built from the workspace before the run starts, searched
+    by find_code, and dropped once the run is over (the agent's edits make it stale). It
+    outlives a pause for review, so a revision after a rejection still has find_code."""
+
+    index: CodeIndex
+    run_id: str
+
+    async def build(self, workspace: Path) -> None:
+        await self.index.index(self.run_id, workspace)
+
+    async def search(self, query: str) -> list[Hit]:
+        return await self.index.search(self.run_id, query)
+
+    async def drop(self) -> None:
+        await self.index.drop(self.run_id)

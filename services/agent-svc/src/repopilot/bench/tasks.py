@@ -83,8 +83,9 @@ COMPLEX_MIN_LINES = 3
 
 def changed_lines(patch: str) -> int:
     """Added plus removed lines in a unified diff (file headers excluded)."""
-    return sum(1 for ln in patch.splitlines()
-               if ln[:1] in "+-" and not ln.startswith(("+++ ", "--- ")))
+    return sum(
+        1 for ln in patch.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++ ", "--- "))
+    )
 
 
 def difficulty_for(fix_patch: str) -> str:

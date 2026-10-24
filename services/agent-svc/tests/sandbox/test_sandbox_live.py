@@ -132,7 +132,9 @@ async def test_background_child_cannot_hang_exec(sandbox):
 
 async def test_fork_bomb_contained(sandbox):
     client, sid = sandbox
-    bomb = "import os\nwhile True:\n    try:\n        os.fork()\n    except OSError:\n        pass\n"
+    bomb = (
+        "import os\nwhile True:\n    try:\n        os.fork()\n    except OSError:\n        pass\n"
+    )
     start = time.monotonic()
     await client.exec(sid, ["python", "-c", bomb], timeout_s=10)
     assert time.monotonic() - start < 60
@@ -201,9 +203,15 @@ async def test_destroy_removes_volume(repo: Path):
         await client.destroy(sid)
     env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
     # In a thread: the selector event loop used on Windows (for psycopg) has no subprocesses.
-    done = await anyio.to_thread.run_sync(lambda: subprocess.run(
-        ["docker", "volume", "ls", "-q", "-f", f"name=rp-ws-{sid}"], env=env,
-        capture_output=True, text=True, check=True))
+    done = await anyio.to_thread.run_sync(
+        lambda: subprocess.run(
+            ["docker", "volume", "ls", "-q", "-f", f"name=rp-ws-{sid}"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    )
     assert done.stdout.strip() == ""
 
 
@@ -266,7 +274,9 @@ async def test_upload_strips_setuid_and_devices(sandbox):
         await client.upload_tar(sid, _tar((dev, b"")))
     assert exc.value.code == "bad_archive"
     await client.upload_tar(sid, _tar(_file("suid", b"x", 0o4755)))
-    res = await client.exec(sid, ["python", "-c", "import os; print(oct(os.stat('suid').st_mode & 0o7777))"])
+    res = await client.exec(
+        sid, ["python", "-c", "import os; print(oct(os.stat('suid').st_mode & 0o7777))"]
+    )
     assert res.stdout.strip() == "0o755"
 
 

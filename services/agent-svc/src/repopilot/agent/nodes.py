@@ -17,16 +17,20 @@ from repopilot.llm.types import ToolCall, cost_usd
 from repopilot.sandbox_client import SandboxError
 from repopilot.tools.gitstatus import changed_paths
 from repopilot.tools.policy import ToolPolicy
-from repopilot.tools.registry import ToolContext
+from repopilot.tools.registry import ToolContext, ToolOutcome
 
 MAX_NUDGES = 3  # nudges in a row; the next reply without a tool call fails the run
 TEST_TIMEOUT_S = 300
 OUTPUT_TAIL = 4000
-NUDGE = ("Reply with a tool call. Explore with the read tools, call submit_plan once you know "
-         "the cause, and call finish when your fix is complete.")
-NUDGE_EMPTY = ("Your last reply was empty: the tool call was probably malformed and could not be "
-               "parsed. Send exactly one tool call with valid JSON arguments. For multi-line "
-               "edits prefer apply_patch, or escape newlines in replace_text strings.")
+NUDGE = (
+    "Reply with a tool call. Explore with the read tools, call submit_plan once you know "
+    "the cause, and call finish when your fix is complete."
+)
+NUDGE_EMPTY = (
+    "Your last reply was empty: the tool call was probably malformed and could not be "
+    "parsed. Send exactly one tool call with valid JSON arguments. For multi-line "
+    "edits prefer apply_patch, or escape newlines in replace_text strings."
+)
 
 
 def _user(content: str) -> dict:
@@ -36,17 +40,24 @@ def _user(content: str) -> dict:
 async def intake(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     trace_id = telemetry.trace_id_hex(trace.get_current_span())
-    await deps.recorder.status(state.run_id, "running",
-                               **({"trace_id": trace_id} if trace_id else {}))
+    await deps.recorder.status(
+        state.run_id, "running", **({"trace_id": trace_id} if trace_id else {})
+    )
     # Ground the model in the real layout up front (small models otherwise guess paths). This
     # is context from the harness, not an agent tool call, so it is not counted or recorded.
-    ctx = ToolContext(sandbox=deps.sandbox, sandbox_id=state.sandbox_id,
-                      policy=ToolPolicy(state.protected_paths), test_command=state.test_command,
-                      code_search=deps.code_search)
+    ctx = ToolContext(
+        sandbox=deps.sandbox,
+        sandbox_id=state.sandbox_id,
+        policy=ToolPolicy(state.protected_paths),
+        test_command=state.test_command,
+        code_search=deps.code_search,
+    )
     listing = await deps.registry.dispatch(ctx, "list_dir", '{"depth": 2}')
     return {
-        "messages": [{"role": "system", "content": system_prompt(state)},
-                     issue_message(state, listing.content if listing.ok else "")],
+        "messages": [
+            {"role": "system", "content": system_prompt(state)},
+            issue_message(state, listing.content if listing.ok else ""),
+        ],
         "started_at": state.started_at or deps.clock(),
         "route": "llm",
     }
@@ -56,13 +67,18 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     if reason := budget_exceeded(state, deps.clock()):
         return {"failure_reason": f"budget:{reason}", "route": "fail"}
+    offered = tools_for(state, deps.registry)
     try:
         with telemetry.llm_span(deps.llm.model, state.run_id, len(state.messages)) as span:
-            result = await deps.llm.chat(state.messages, tools_for(state, deps.registry))
+            result = await deps.llm.chat(state.messages, offered)
             telemetry.record_llm_result(
-                span, result.usage.prompt_tokens, result.usage.completion_tokens,
-                result.finish_reason, [c.name for c in result.message.tool_calls],
-                result.message.content)
+                span,
+                result.usage.prompt_tokens,
+                result.usage.completion_tokens,
+                result.finish_reason,
+                [c.name for c in result.message.tool_calls],
+                result.message.content,
+            )
     except openai.APIError as exc:  # the client already retried; the run cannot continue
         await deps.recorder.event(state.run_id, "llm", "error", {"error": str(exc)[:1000]})
         return {"failure_reason": f"llm_error: {type(exc).__name__}", "route": "fail"}
@@ -71,19 +87,34 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     if message["content"] is None and not reply.tool_calls:
         message["content"] = ""  # OpenAI rejects an assistant turn with neither
     u = state.usage
-    usage = u.model_copy(update={
-        "llm_calls": u.llm_calls + 1,
-        "prompt_tokens": u.prompt_tokens + result.usage.prompt_tokens,
-        "completion_tokens": u.completion_tokens + result.usage.completion_tokens,
-        "cost_usd": u.cost_usd + cost_usd(result.usage, deps.price_in, deps.price_out),
-    })
-    await deps.recorder.event(state.run_id, "llm", "reply", {
-        "phase": state.phase, "tool_calls": [c.name for c in reply.tool_calls],
-        "content": (reply.content or "")[:1000], "finish_reason": result.finish_reason,
-        "prompt_tokens": result.usage.prompt_tokens,
-        "completion_tokens": result.usage.completion_tokens,
-    })
-    update: dict = {"messages": [*state.messages, message], "usage": usage}
+    usage = u.model_copy(
+        update={
+            "llm_calls": u.llm_calls + 1,
+            "prompt_tokens": u.prompt_tokens + result.usage.prompt_tokens,
+            "completion_tokens": u.completion_tokens + result.usage.completion_tokens,
+            "cost_usd": u.cost_usd + cost_usd(result.usage, deps.price_in, deps.price_out),
+        }
+    )
+    # Counters before the event: a console refreshing the run row on the event sees this call.
+    await deps.recorder.usage(state.run_id, usage.model_dump())
+    await deps.recorder.event(
+        state.run_id,
+        "llm",
+        "reply",
+        {
+            "phase": state.phase,
+            "tool_calls": [c.name for c in reply.tool_calls],
+            "content": (reply.content or "")[:1000],
+            "finish_reason": result.finish_reason,
+            "prompt_tokens": result.usage.prompt_tokens,
+            "completion_tokens": result.usage.completion_tokens,
+        },
+    )
+    update: dict = {
+        "messages": [*state.messages, message],
+        "usage": usage,
+        "offered_tools": [s.name for s in offered],
+    }
     if state.phase == "explore":
         update["explore_steps"] = state.explore_steps + 1
     if reply.tool_calls:
@@ -97,28 +128,60 @@ async def llm(state: RunState, runtime: Runtime[RunDeps]) -> dict:
 
 async def nudge(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     empty = not (state.messages[-1].get("content") or "").strip()
-    return {"messages": [*state.messages, _user(NUDGE_EMPTY if empty else NUDGE)],
-            "nudges": state.nudges + 1, "route": "llm"}
+    return {
+        "messages": [*state.messages, _user(NUDGE_EMPTY if empty else NUDGE)],
+        "nudges": state.nudges + 1,
+        "route": "llm",
+    }
 
 
 def _calls(message: dict) -> list[ToolCall]:
-    return [ToolCall(id=c["id"], name=c["function"]["name"], arguments=c["function"]["arguments"])
-            for c in message.get("tool_calls", [])]
+    return [
+        ToolCall(id=c["id"], name=c["function"]["name"], arguments=c["function"]["arguments"])
+        for c in message.get("tool_calls", [])
+    ]
+
+
+async def _refuse(deps: RunDeps, run_id: str, step: int, call: ToolCall, reason: str) -> str:
+    """A call the harness does not run. It is not counted, but it gets a tool_calls row so the
+    console can pair every reply with its calls; control tools show up as events instead."""
+    outcome = ToolOutcome(ok=False, error=reason)
+    if call.name not in CONTROL_TOOLS:
+        await deps.recorder.tool_call(run_id, step, call, outcome, refused=True)
+    return outcome.for_model()
 
 
 async def tools(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
-    ctx = ToolContext(sandbox=deps.sandbox, sandbox_id=state.sandbox_id,
-                      policy=ToolPolicy(state.protected_paths), test_command=state.test_command,
-                      code_search=deps.code_search)
+    ctx = ToolContext(
+        sandbox=deps.sandbox,
+        sandbox_id=state.sandbox_id,
+        policy=ToolPolicy(state.protected_paths),
+        test_command=state.test_command,
+        code_search=deps.code_search,
+    )
     messages = list(state.messages)
     usage = state.usage.model_copy()
     phase, plan, summary, finish_called = state.phase, state.plan, state.summary, False
+    # Exactly the tools this reply was offered (the llm node has since counted the reply as an
+    # exploration step). A checkpoint from before offered_tools existed falls back to the phase.
+    offered = set(state.offered_tools) or allowed_tool_names(state, deps.registry)
     for call in _calls(state.messages[-1]):
-        allowed = allowed_tool_names(state.model_copy(update={"phase": phase}), deps.registry)
+        # A submit_plan earlier in the same reply unlocks the edit tools for the calls after it.
+        allowed = (
+            offered
+            if phase == state.phase
+            else allowed_tool_names(state.model_copy(update={"phase": phase}), deps.registry)
+        )
         if call.name not in allowed:
-            content = (f"ERROR: tool {call.name!r} is not available in the {phase} phase; "
-                       f"available: {', '.join(sorted(allowed))}")
+            content = await _refuse(
+                deps,
+                state.run_id,
+                usage.tool_calls,
+                call,
+                f"tool {call.name!r} is not available in the {phase} phase; "
+                f"available: {', '.join(sorted(allowed))}",
+            )
         elif call.name in CONTROL_TOOLS:
             try:
                 args = CONTROL_TOOLS[call.name].model_validate_json(call.arguments or "{}")
@@ -127,29 +190,55 @@ async def tools(state: RunState, runtime: Runtime[RunDeps]) -> dict:
             else:
                 if call.name == "submit_plan":
                     plan, phase = Plan(**args.model_dump()), "edit"
-                    content = ("Plan recorded. You now have the editing tools: implement the fix, "
-                               "run the tests, then call finish.")
+                    content = (
+                        "Plan recorded. You now have the editing tools: implement the fix, "
+                        "run the tests, then call finish."
+                    )
                 else:
                     summary, finish_called = args.summary, True
                     content = "Submitted for validation."
-            await deps.recorder.event(state.run_id, "tools", call.name, {"arguments": call.arguments})
-        elif reason := budget_exceeded(state.model_copy(update={"usage": usage}), deps.clock()):
+            await deps.recorder.event(
+                state.run_id, "tools", call.name, {"arguments": call.arguments}
+            )
+        elif reason := budget_exceeded(
+            state.model_copy(update={"usage": usage}), deps.clock(), llm_calls=False
+        ):
             # One reply may request many calls; the budget holds within a turn too.
-            content = f"ERROR: budget exhausted ({reason}); this call was not run."
+            content = await _refuse(
+                deps,
+                state.run_id,
+                usage.tool_calls,
+                call,
+                f"budget exhausted ({reason}); this call was not run.",
+            )
         else:
             usage.tool_calls += 1
             with telemetry.tool_span(call.name, state.run_id) as span:
                 outcome = await deps.registry.dispatch(ctx, call.name, call.arguments)
-                telemetry.record_tool_result(span, outcome.ok, outcome.denied, outcome.error,
-                                             outcome.latency_ms, outcome.content)
+                telemetry.record_tool_result(
+                    span,
+                    outcome.ok,
+                    outcome.denied,
+                    outcome.error,
+                    outcome.latency_ms,
+                    outcome.content,
+                )
             usage.tool_failures += not outcome.ok
             usage.unauthorized_attempts += outcome.denied
             await deps.recorder.tool_call(state.run_id, usage.tool_calls, call, outcome)
             content = outcome.for_model()
         messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
-    return {"messages": messages, "usage": usage, "phase": phase, "plan": plan,
-            "summary": summary, "finish_called": finish_called,
-            "route": "validate" if finish_called else "llm"}
+    if usage != state.usage:
+        await deps.recorder.usage(state.run_id, usage.model_dump())
+    return {
+        "messages": messages,
+        "usage": usage,
+        "phase": phase,
+        "plan": plan,
+        "summary": summary,
+        "finish_called": finish_called,
+        "route": "validate" if finish_called else "llm",
+    }
 
 
 parse_name_status_z = changed_paths  # renames and copies contribute both sides
@@ -170,8 +259,11 @@ async def workspace_changes(sb, sid: str) -> tuple[str, list[str]]:
     # `git diff` would then hide.
     diff = (await sb.exec(sid, ["git", "diff", "HEAD"])).stdout
     changed = parse_name_status_z(
-        (await sb.exec(sid, ["git", "diff", "HEAD", "--name-status", "-M", "-z"])).stdout)
-    ignored = (await sb.exec(sid, ["git", "ls-files", "-o", "-i", "--exclude-standard", "-z"])).stdout
+        (await sb.exec(sid, ["git", "diff", "HEAD", "--name-status", "-M", "-z"])).stdout
+    )
+    ignored = (
+        await sb.exec(sid, ["git", "ls-files", "-o", "-i", "--exclude-standard", "-z"])
+    ).stdout
     changed += [p for p in ignored.split("\x00") if p and not _is_cache(p)]
     return diff, sorted(set(changed))
 
@@ -182,8 +274,11 @@ async def validate(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     try:
         return await _validate(state, runtime.context)
     except SandboxError as exc:  # e.g. the sandbox was reaped
-        return {"failure_reason": f"sandbox_error: {exc.code}", "finish_called": False,
-                "route": "fail"}
+        return {
+            "failure_reason": f"sandbox_error: {exc.code}",
+            "finish_called": False,
+            "route": "fail",
+        }
 
 
 async def _validate(state: RunState, deps: RunDeps) -> dict:
@@ -199,19 +294,31 @@ async def _validate(state: RunState, deps: RunDeps) -> dict:
         diff, changed = await workspace_changes(sb, sid)
         violations = [p for p in changed if policy.check_write(p)]
         report = TestReport(
-            passed=res.exit_code == 0, reason=None if res.exit_code == 0 else "tests_failing",
-            exit_code=res.exit_code, output_tail=(res.stdout + res.stderr)[-OUTPUT_TAIL:],
+            passed=res.exit_code == 0,
+            reason=None if res.exit_code == 0 else "tests_failing",
+            exit_code=res.exit_code,
+            output_tail=(res.stdout + res.stderr)[-OUTPUT_TAIL:],
             changed_files=changed,
         )
     usage = state.usage
     if violations:
-        report = TestReport(passed=False, reason="protected_paths_changed",
-                            changed_files=changed, violations=violations)
+        report = TestReport(
+            passed=False,
+            reason="protected_paths_changed",
+            changed_files=changed,
+            violations=violations,
+        )
         usage = usage.model_copy(
-            update={"unauthorized_attempts": usage.unauthorized_attempts + len(violations)})
+            update={"unauthorized_attempts": usage.unauthorized_attempts + len(violations)}
+        )
     await deps.recorder.event(state.run_id, "validate", "report", report.model_dump())
-    update = {"diff": diff, "last_tests": report, "usage": usage, "finish_called": False,
-              "validated_at": deps.clock()}
+    update = {
+        "diff": diff,
+        "last_tests": report,
+        "usage": usage,
+        "finish_called": False,
+        "validated_at": deps.clock(),
+    }
     if report.passed:
         return update | {"route": "request_review"}
     if report.reason != "protected_paths_changed" and state.retries < state.budget.max_retries:
@@ -222,15 +329,19 @@ async def _validate(state: RunState, deps: RunDeps) -> dict:
 async def diagnose(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     report = state.last_tests
     if report and report.reason == "no_changes":
-        text = ("Validation failed: you have not changed any files. Make the fix, then call "
-                "finish.")
+        text = "Validation failed: you have not changed any files. Make the fix, then call finish."
     else:
-        text = (f"Validation failed: `{' '.join(state.test_command)}` exited with "
-                f"{report.exit_code if report else '?'}. Output (tail):\n"
-                f"{report.output_tail if report else ''}\n\nFind the cause, fix it, and call "
-                "finish again.")
-    return {"messages": [*state.messages, _user(text)], "retries": state.retries + 1,
-            "route": "llm"}
+        text = (
+            f"Validation failed: `{' '.join(state.test_command)}` exited with "
+            f"{report.exit_code if report else '?'}. Output (tail):\n"
+            f"{report.output_tail if report else ''}\n\nFind the cause, fix it, and call "
+            "finish again."
+        )
+    return {
+        "messages": [*state.messages, _user(text)],
+        "retries": state.retries + 1,
+        "route": "llm",
+    }
 
 
 async def request_review(state: RunState, runtime: Runtime[RunDeps]) -> dict:
@@ -239,10 +350,13 @@ async def request_review(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     awaiting_approval while the approved run is opening its PR."""
     if not state.auto_approve:
         # Usage so far too: the reviewer sees what the run cost before deciding.
-        await runtime.context.recorder.status(state.run_id, "awaiting_approval",
-                                              approval_request=_review_payload(state),
-                                              retries=state.retries,
-                                              usage=state.usage.model_dump())
+        await runtime.context.recorder.status(
+            state.run_id,
+            "awaiting_approval",
+            approval_request=_review_payload(state),
+            retries=state.retries,
+            usage=state.usage.model_dump(),
+        )
     return {"route": "approval"}
 
 
@@ -252,20 +366,44 @@ async def approval(state: RunState, runtime: Runtime[RunDeps]) -> dict:
         decision = Approval(decision="approve", by="auto")
     else:
         decision = Approval.model_validate(interrupt(_review_payload(state)))
+        # Reviewer decisions only (CLI, API and console all resume here); an auto-approval is
+        # not one, and is in the event log. One row per review round, first write wins.
+        await deps.recorder.approval(
+            state.run_id,
+            revision=state.revisions,
+            decision=decision.decision,
+            comment=decision.comment,
+            by=decision.by,
+        )
     # Time spent waiting for the reviewer is not agent time: shift the clock's origin by it.
     paused = 0.0 if state.auto_approve else max(0.0, deps.clock() - state.validated_at)
     started_at = state.started_at + paused
-    await deps.recorder.event(state.run_id, "approval", decision.decision,
-                              decision.model_dump() | {"waited_s": round(paused, 1)})
+    await deps.recorder.event(
+        state.run_id,
+        "approval",
+        decision.decision,
+        decision.model_dump() | {"waited_s": round(paused, 1)},
+    )
     if decision.decision == "approve":
-        return {"approval": decision, "status": "approved", "route": "open_pr",
-                "started_at": started_at}
+        return {
+            "approval": decision,
+            "status": "approved",
+            "route": "open_pr",
+            "started_at": started_at,
+        }
     if decision.comment and state.revisions < 1:
         await deps.recorder.status(state.run_id, "running")
-        note = _user(f"The reviewer rejected the change: {decision.comment}\nRevise it, run the "
-                     "tests, and call finish again.")
-        return {"approval": decision, "messages": [*state.messages, note],
-                "revisions": state.revisions + 1, "route": "llm", "started_at": started_at}
+        note = _user(
+            f"The reviewer rejected the change: {decision.comment}\nRevise it, run the "
+            "tests, and call finish again."
+        )
+        return {
+            "approval": decision,
+            "messages": [*state.messages, note],
+            "revisions": state.revisions + 1,
+            "route": "llm",
+            "started_at": started_at,
+        }
     return {"approval": decision, "status": "rejected", "route": "record"}
 
 
@@ -285,22 +423,32 @@ def _review_payload(state: RunState) -> dict:
     """What a reviewer needs to decide: the change, the evidence, and the agent's reasoning."""
     tests = state.last_tests
     return {
-        "run_id": state.run_id, "diff": state.diff, "summary": state.summary,
+        "run_id": state.run_id,
+        "diff": state.diff,
+        "summary": state.summary,
         "plan": state.plan.model_dump() if state.plan else None,
-        "tests": {"exit_code": tests.exit_code if tests else None,
-                  "output_tail": tests.output_tail if tests else "",
-                  # True means a green suite says little: it was green before the change.
-                  "passed_before_change": state.baseline_tests_passed},
+        "tests": {
+            "exit_code": tests.exit_code if tests else None,
+            "output_tail": tests.output_tail if tests else "",
+            # True means a green suite says little: it was green before the change.
+            "passed_before_change": state.baseline_tests_passed,
+        },
     }
 
 
 async def record(state: RunState, runtime: Runtime[RunDeps]) -> dict:
     deps = runtime.context
     # Event first: a stream ends once the status is terminal.
-    await deps.recorder.event(state.run_id, "record", state.status,
-                              {"failure_reason": state.failure_reason})
+    await deps.recorder.event(
+        state.run_id, "record", state.status, {"failure_reason": state.failure_reason}
+    )
     await deps.recorder.status(
-        state.run_id, state.status, failure_reason=state.failure_reason, pr_url=state.pr_url,
-        retries=state.retries, usage=state.usage.model_dump(), result=_review_payload(state),
+        state.run_id,
+        state.status,
+        failure_reason=state.failure_reason,
+        pr_url=state.pr_url,
+        retries=state.retries,
+        usage=state.usage.model_dump(),
+        result=_review_payload(state),
     )
     return {"route": "end"}

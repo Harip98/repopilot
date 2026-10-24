@@ -96,8 +96,11 @@ class ToolRegistry:
 
     def specs(self) -> list[ToolSpec]:
         return [
-            ToolSpec(name=t.name, description=t.description,
-                     parameters=drop_titles(t.args_model.model_json_schema()))
+            ToolSpec(
+                name=t.name,
+                description=t.description,
+                parameters=drop_titles(t.args_model.model_json_schema()),
+            )
             for t in self._tools.values()
         ]
 
@@ -116,7 +119,9 @@ class ToolRegistry:
 
         tool = self._tools.get(name)
         if tool is None:
-            return done(ok=False, error=f"unknown tool {name!r}; available: {', '.join(self._tools)}")
+            return done(
+                ok=False, error=f"unknown tool {name!r}; available: {', '.join(self._tools)}"
+            )
         try:
             raw = json.loads(arguments or "{}")
         except json.JSONDecodeError as exc:
@@ -139,6 +144,7 @@ class ToolRegistry:
             return done(ok=False, error=truncate(str(exc), MAX_ERROR))
         except Exception as exc:
             log.exception("tool %s failed", name)
-            return done(ok=False, error=truncate(
-                f"internal error: {type(exc).__name__}: {exc}", MAX_ERROR))
+            return done(
+                ok=False, error=truncate(f"internal error: {type(exc).__name__}: {exc}", MAX_ERROR)
+            )
         return done(ok=True, content=truncate(content))

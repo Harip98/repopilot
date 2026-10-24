@@ -19,12 +19,20 @@ class ChatModel(Protocol):
 
 class OpenAICompatChat:
     def __init__(
-        self, base_url: str, api_key: str, model: str, timeout_s: float, *,
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout_s: float,
+        *,
         http_client: httpx.AsyncClient | None = None,
     ):
         self.model = model
         self._client = AsyncOpenAI(
-            base_url=base_url, api_key=api_key or "unused", timeout=timeout_s, max_retries=2,
+            base_url=base_url,
+            api_key=api_key or "unused",
+            timeout=timeout_s,
+            max_retries=2,
             http_client=http_client,
         )
 
@@ -32,7 +40,10 @@ class OpenAICompatChat:
         self, messages: list[dict], tools: list[ToolSpec] | None = None, max_tokens: int = 2048
     ) -> ChatResult:
         resp = await self._client.chat.completions.create(
-            model=self.model, messages=messages, temperature=0, max_tokens=max_tokens,
+            model=self.model,
+            messages=messages,
+            temperature=0,
+            max_tokens=max_tokens,
             tools=[t.to_openai() for t in tools] if tools else NOT_GIVEN,
         )
         choice = resp.choices[0]
@@ -47,11 +58,13 @@ class OpenAICompatChat:
         )
         return ChatResult(
             message=AssistantMessage(content=choice.message.content, tool_calls=calls),
-            usage=usage, finish_reason=choice.finish_reason,
+            usage=usage,
+            finish_reason=choice.finish_reason,
         )
 
 
 def get_chat_model(model: str | None = None) -> OpenAICompatChat:
     s = get_settings()
-    return OpenAICompatChat(s.llm_base_url, s.llm_api_key.get_secret_value(), model or s.llm_model,
-                            s.llm_timeout_s)
+    return OpenAICompatChat(
+        s.llm_base_url, s.llm_api_key.get_secret_value(), model or s.llm_model, s.llm_timeout_s
+    )

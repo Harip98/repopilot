@@ -48,6 +48,10 @@ class ResultStore(Protocol):
 
     async def load(self, name: str) -> list[EvalResult]: ...
 
+    async def replace_eval(
+        self, name: str, meta: dict, results: list[EvalResult], created_at: datetime | None = None
+    ) -> None: ...
+
 
 class MemoryResultStore:
     def __init__(self) -> None:
@@ -55,8 +59,11 @@ class MemoryResultStore:
         self.metas: dict[str, dict] = {}
 
     async def done_task_ids(self, name: str) -> set[str]:
-        return {task for (eval_run, task), r in self.rows.items()
-                if eval_run == name and r.status != "error"}
+        return {
+            task
+            for (eval_run, task), r in self.rows.items()
+            if eval_run == name and r.status != "error"
+        }
 
     async def get_meta(self, name: str) -> dict | None:
         return self.metas.get(name)
@@ -70,6 +77,14 @@ class MemoryResultStore:
     async def load(self, name: str) -> list[EvalResult]:
         return [r for (eval_run, _), r in sorted(self.rows.items()) if eval_run == name]
 
+    async def replace_eval(
+        self, name: str, meta: dict, results: list[EvalResult], created_at: datetime | None = None
+    ) -> None:
+        self.rows = {key: r for key, r in self.rows.items() if key[0] != name}
+        self.metas[name] = dict(meta)
+        for result in results:
+            await self.save(result)
+
 
 _COLUMNS = list(EvalResult.model_fields)
 
@@ -80,8 +95,10 @@ class PgResultStore:
 
     async def done_task_ids(self, name: str) -> set[str]:
         async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
-            cur = await conn.execute("SELECT task_id FROM eval_results"
-                                     " WHERE eval_run = %s AND status <> 'error'", (name,))
+            cur = await conn.execute(
+                "SELECT task_id FROM eval_results WHERE eval_run = %s AND status <> 'error'",
+                (name,),
+            )
             return {row[0] for row in await cur.fetchall()}
 
     async def get_meta(self, name: str) -> dict | None:
@@ -92,8 +109,10 @@ class PgResultStore:
 
     async def put_meta(self, name: str, meta: dict) -> None:
         async with await psycopg.AsyncConnection.connect(self._dsn, autocommit=True) as conn:
-            await conn.execute("INSERT INTO eval_runs (name, meta) VALUES (%s, %s)"
-                               " ON CONFLICT (name) DO NOTHING", (name, Jsonb(meta)))
+            await conn.execute(
+                "INSERT INTO eval_runs (name, meta) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+                (name, Jsonb(meta)),
+            )
 
     async def save(self, result: EvalResult) -> None:
         row = result.model_dump()
@@ -114,9 +133,41 @@ class PgResultStore:
         async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
             cur = await conn.execute(
                 f"SELECT {', '.join(c for c in _COLUMNS if c != 'run_id')}, run_id::text"
-                " FROM eval_results WHERE eval_run = %s ORDER BY task_id", (name,))
+                " FROM eval_results WHERE eval_run = %s ORDER BY task_id",
+                (name,),
+            )
             names = [c for c in _COLUMNS if c != "run_id"] + ["run_id"]
-            return [EvalResult(**dict(zip(names, row, strict=True))) for row in await cur.fetchall()]
+            return [
+                EvalResult(**dict(zip(names, row, strict=True))) for row in await cur.fetchall()
+            ]
+
+    async def replace_eval(
+        self, name: str, meta: dict, results: list[EvalResult], created_at: datetime | None = None
+    ) -> None:
+        """Store a whole eval in one transaction, replacing whatever it had. `created_at` dates
+        the rows (an imported report keeps the day it was run; default now)."""
+        cols = [c for c in _COLUMNS if c != "run_id"]
+        async with (
+            await psycopg.AsyncConnection.connect(self._dsn, autocommit=True) as conn,
+            conn.transaction(),
+        ):
+            await conn.execute("DELETE FROM eval_results WHERE eval_run = %s", (name,))
+            await conn.execute(
+                "INSERT INTO eval_runs (name, meta, created_at)"
+                " VALUES (%s, %s, coalesce(%s, now()))"
+                " ON CONFLICT (name) DO UPDATE SET meta = EXCLUDED.meta,"
+                " created_at = EXCLUDED.created_at",
+                (name, Jsonb(meta), created_at),
+            )
+            for result in results:
+                row = result.model_dump()
+                # run_id only when that run is in this database (not on a fresh clone).
+                await conn.execute(
+                    f"INSERT INTO eval_results ({', '.join(cols)}, run_id, created_at)"
+                    f" VALUES ({', '.join(['%s'] * len(cols))},"
+                    " (SELECT id FROM runs WHERE id::text = %s), coalesce(%s, now()))",
+                    [row[c] for c in cols] + [row["run_id"], created_at],
+                )
 
 
 def edited_existing_tests(diff: str) -> list[str]:
@@ -134,47 +185,85 @@ def edited_existing_tests(diff: str) -> list[str]:
     return edited
 
 
-def _from_outcome(name: str, task: Task, run_id: str, model: str, outcome: BenchOutcome,
-                  latency_ms: int) -> EvalResult:
+def _from_outcome(
+    name: str, task: Task, run_id: str, model: str, outcome: BenchOutcome, latency_ms: int
+) -> EvalResult:
     state, graded = outcome.result.state, outcome.graded
     u = state.usage
     infra = (state.failure_reason or "").startswith(INFRA_FAILURES)
     return EvalResult(
-        eval_run=name, task_id=task.id, run_id=run_id, model=model, difficulty=task.difficulty,
-        split=task.split, status="error" if infra else state.status,
+        eval_run=name,
+        task_id=task.id,
+        run_id=run_id,
+        model=model,
+        difficulty=task.difficulty,
+        split=task.split,
+        status="error" if infra else state.status,
         failure_reason=state.failure_reason,
-        resolved=state.status in ("completed", "pr_opened") and graded is not None and graded.resolved,
+        resolved=state.status in ("completed", "pr_opened")
+        and graded is not None
+        and graded.resolved,
         patch_applied=bool(outcome.final_diff.strip()),
         visible_tests_passed=bool(state.last_tests and state.last_tests.passed),
-        baseline_tests_passed=state.baseline_tests_passed, retries=state.retries,
-        llm_calls=u.llm_calls, tool_calls=u.tool_calls, tool_failures=u.tool_failures,
+        baseline_tests_passed=state.baseline_tests_passed,
+        retries=state.retries,
+        llm_calls=u.llm_calls,
+        tool_calls=u.tool_calls,
+        tool_failures=u.tool_failures,
         unauthorized_attempts=u.unauthorized_attempts,
         test_files_modified=bool(edited_existing_tests(outcome.final_diff)),
         latency_ms=latency_ms,
-        prompt_tokens=u.prompt_tokens, completion_tokens=u.completion_tokens, cost_usd=u.cost_usd,
+        prompt_tokens=u.prompt_tokens,
+        completion_tokens=u.completion_tokens,
+        cost_usd=u.cost_usd,
         heldout_exit_code=graded.exit_code if graded else None,
         error=state.failure_reason if infra else None,
     )
 
 
-def _error_result(name: str, task: Task, run_id: str, model: str, exc: Exception,
-                  latency_ms: int) -> EvalResult:
+def _error_result(
+    name: str, task: Task, run_id: str, model: str, exc: Exception, latency_ms: int
+) -> EvalResult:
     return EvalResult(
-        eval_run=name, task_id=task.id, run_id=run_id, model=model, difficulty=task.difficulty,
-        split=task.split, status="error", failure_reason=None, resolved=False,
-        patch_applied=False, visible_tests_passed=False, baseline_tests_passed=None, retries=0,
-        llm_calls=0, tool_calls=0, tool_failures=0, unauthorized_attempts=0,
-        test_files_modified=False, latency_ms=latency_ms, prompt_tokens=0, completion_tokens=0,
-        cost_usd=0.0, heldout_exit_code=None, error=f"{type(exc).__name__}: {exc}"[:2000],
+        eval_run=name,
+        task_id=task.id,
+        run_id=run_id,
+        model=model,
+        difficulty=task.difficulty,
+        split=task.split,
+        status="error",
+        failure_reason=None,
+        resolved=False,
+        patch_applied=False,
+        visible_tests_passed=False,
+        baseline_tests_passed=None,
+        retries=0,
+        llm_calls=0,
+        tool_calls=0,
+        tool_failures=0,
+        unauthorized_attempts=0,
+        test_files_modified=False,
+        latency_ms=latency_ms,
+        prompt_tokens=0,
+        completion_tokens=0,
+        cost_usd=0.0,
+        heldout_exit_code=None,
+        error=f"{type(exc).__name__}: {exc}"[:2000],
     )
 
 
-async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: ResultStore, *,
-                   model: str, on_result: Callable[[EvalResult], None] | None = None,
-                   clock: Callable[[], float] = time.monotonic,
-                   meta: dict | None = None,
-                   on_saved: Callable[[list[EvalResult]], None] | None = None,
-                   ) -> list[EvalResult]:
+async def run_eval(
+    name: str,
+    tasks: list[Task],
+    run_task: RunTask,
+    store: ResultStore,
+    *,
+    model: str,
+    on_result: Callable[[EvalResult], None] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    meta: dict | None = None,
+    on_saved: Callable[[list[EvalResult]], None] | None = None,
+) -> list[EvalResult]:
     """`on_saved` gets every result so far after each task, e.g. to rewrite the report files
     so a killed eval still leaves a current report."""
     if meta is not None:
@@ -187,7 +276,8 @@ async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: Resul
                 raise EvalConfigMismatch(
                     f"eval {name!r} was started with a different configuration ("
                     + ", ".join(f"{k}: {started[k]!r} -> {meta.get(k)!r}" for k in changed)
-                    + "); use a new --name")
+                    + "); use a new --name"
+                )
     done = await store.done_task_ids(name)
     for task in tasks:
         if task.id in done:
@@ -195,8 +285,9 @@ async def run_eval(name: str, tasks: list[Task], run_task: RunTask, store: Resul
         run_id, start = new_run_id(), clock()
         try:
             outcome = await run_task(task, run_id)
-            result = _from_outcome(name, task, run_id, model, outcome,
-                                   int((clock() - start) * 1000))
+            result = _from_outcome(
+                name, task, run_id, model, outcome, int((clock() - start) * 1000)
+            )
         except Exception as exc:  # noqa: BLE001 - one broken task must not end the eval
             result = _error_result(name, task, run_id, model, exc, int((clock() - start) * 1000))
         await store.save(result)
@@ -215,29 +306,88 @@ def tasks_hash(tasks: list[Task]) -> str:
     return digest.hexdigest()[:16]
 
 
-def eval_meta(name: str, model: str, base_url: str, tasks: list[Task], budget: dict, *,
-              split: str) -> dict:
+def eval_meta(
+    name: str, model: str, base_url: str, tasks: list[Task], budget: dict, *, split: str
+) -> dict:
     def git_sha() -> str:
-        proc = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
-                              capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         return proc.stdout.strip() or "unknown"
 
     return {
-        "model": model, "endpoint": base_url, "split": split, "tasks": len(tasks),
-        "task_hash": tasks_hash(tasks), "git_sha": git_sha(),
-        "date": datetime.now(UTC).strftime("%Y-%m-%d"), "host": platform.platform(terse=True),
+        "model": model,
+        "endpoint": base_url,
+        "split": split,
+        "tasks": len(tasks),
+        "task_hash": tasks_hash(tasks),
+        "git_sha": git_sha(),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "host": platform.platform(terse=True),
         "budget": ", ".join(f"{k}={v}" for k, v in budget.items()),
     }
 
 
-def write_report(name: str, results: list[EvalResult], meta: dict,
-                 out_dir: Path = REPORTS_DIR) -> Path:
+def write_report(
+    name: str, results: list[EvalResult], meta: dict, out_dir: Path = REPORTS_DIR
+) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.jsonl").write_text(
-        "".join(r.model_dump_json() + "\n" for r in results), encoding="utf-8", newline="\n")
-    (out_dir / f"{name}.meta.json").write_text(json.dumps(meta, indent=2) + "\n",
-                                               encoding="utf-8", newline="\n")
+        "".join(r.model_dump_json() + "\n" for r in results), encoding="utf-8", newline="\n"
+    )
+    (out_dir / f"{name}.meta.json").write_text(
+        json.dumps(meta, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     md = out_dir / f"{name}.md"
-    md.write_text(render_markdown(name, meta, summarize(results), results), encoding="utf-8",
-                  newline="\n")
+    md.write_text(
+        render_markdown(name, meta, summarize(results), results), encoding="utf-8", newline="\n"
+    )
     return md
+
+
+def read_report(jsonl: Path) -> tuple[str, dict, list[EvalResult]]:
+    """A written report: its eval name (the file's), meta ({} without a .meta.json) and rows."""
+    name = jsonl.name.removesuffix(".jsonl")
+    results = [
+        EvalResult.model_validate_json(line)
+        for line in jsonl.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if foreign := sorted({r.eval_run for r in results} - {name}):
+        raise ValueError(f"its rows belong to eval {', '.join(foreign)}, not {name}")
+    meta_path = jsonl.with_name(f"{name}.meta.json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    return name, meta, results
+
+
+def _report_date(meta: dict) -> datetime | None:
+    try:
+        return datetime.strptime(meta["date"], "%Y-%m-%d").replace(tzinfo=UTC)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def import_reports(
+    store: ResultStore, directory: Path = REPORTS_DIR, *, replace: bool = False
+) -> list[tuple[str, str, str]]:
+    """Load every <name>.jsonl (and its .meta.json) in `directory` into the store, e.g. the
+    committed reports on a fresh clone. The files are only read. Idempotent: an eval already
+    in the store is left as it is unless `replace`. Returns (name, imported | skipped |
+    invalid, detail) per report."""
+    outcomes = []
+    for jsonl in sorted(directory.glob("*.jsonl")):
+        try:
+            name, meta, results = read_report(jsonl)
+        except (OSError, ValueError) as exc:  # unreadable, bad JSON, or not EvalResult rows
+            outcomes.append((jsonl.name.removesuffix(".jsonl"), "invalid", str(exc)[:500]))
+            continue
+        if not replace and (await store.get_meta(name) is not None or await store.load(name)):
+            outcomes.append((name, "skipped", "already in the database (--replace overwrites)"))
+            continue
+        await store.replace_eval(name, meta, results, _report_date(meta))
+        outcomes.append((name, "imported", f"{len(results)} results"))
+    return outcomes

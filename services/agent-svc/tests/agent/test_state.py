@@ -5,11 +5,17 @@ from repopilot.tools.builtin import build_registry
 
 
 def _state(**kw) -> RunState:
-    base = {"run_id": "r1", "task_id": "orders-api-005", "repo": "orders-api",
-                "issue_title": "Status filter only matches lowercase values",
-                "issue_text": "GET /orders?status=PAID returns nothing.", "sandbox_id": "0123456789abcdef",
-                "test_command": ["pytest", "-q"], "protected_paths": ["tests/test_heldout_*"],
-                "started_at": 1000.0}
+    base = {
+        "run_id": "r1",
+        "task_id": "orders-api-005",
+        "repo": "orders-api",
+        "issue_title": "Status filter only matches lowercase values",
+        "issue_text": "GET /orders?status=PAID returns nothing.",
+        "sandbox_id": "0123456789abcdef",
+        "test_command": ["pytest", "-q"],
+        "protected_paths": ["tests/test_heldout_*"],
+        "started_at": 1000.0,
+    }
     return RunState(**(base | kw))
 
 
@@ -17,6 +23,11 @@ def test_budget_exceeded_each_limit():
     b = Budget(max_llm_calls=5, max_tool_calls=9, max_tokens=100, max_seconds=60)
     assert budget_exceeded(_state(budget=b), now=1001.0) is None
     assert budget_exceeded(_state(budget=b, usage=RunUsage(llm_calls=5)), 1001.0) == "llm_calls"
+    # The tools node: the reply it runs came from a call within budget.
+    assert (
+        budget_exceeded(_state(budget=b, usage=RunUsage(llm_calls=5)), 1001.0, llm_calls=False)
+        is None
+    )
     assert budget_exceeded(_state(budget=b, usage=RunUsage(tool_calls=9)), 1001.0) == "tool_calls"
     used = RunUsage(prompt_tokens=80, completion_tokens=20)
     assert budget_exceeded(_state(budget=b, usage=used), 1001.0) == "tokens"
@@ -47,9 +58,16 @@ def test_system_prompt_mentions_rules_not_secrets():
 
 
 def test_state_roundtrips_json():
-    state = _state(phase="edit", plan=Plan(root_cause="r", files=["app/store.py"],
-                                           acceptance_criteria=["a"], test_targets=["tests"]),
-                   messages=[{"role": "user", "content": "hi"}])
+    state = _state(
+        phase="edit",
+        plan=Plan(
+            root_cause="r",
+            files=["app/store.py"],
+            acceptance_criteria=["a"],
+            test_targets=["tests"],
+        ),
+        messages=[{"role": "user", "content": "hi"}],
+    )
     assert RunState.model_validate_json(state.model_dump_json()) == state
 
 

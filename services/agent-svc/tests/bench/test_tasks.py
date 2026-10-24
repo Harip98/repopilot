@@ -30,7 +30,9 @@ BUG = """\
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+    ).stdout
 
 
 @pytest.fixture
@@ -57,12 +59,21 @@ def test_load_tasks(bench: Path):
     assert load_tasks(split="test", root=bench / "tasks", repos_root=bench / "repos") == []
 
 
-@pytest.mark.parametrize("breakage, needle", [
-    (lambda t: (t / "task.yaml").write_text(TASK_YAML.replace("demo-001", "Demo_1")), "id"),
-    (lambda t: (t / "bug.patch").unlink(), "bug.patch"),
-    (lambda t: (t / "task.yaml").write_text(TASK_YAML.replace("repo: demo", "repo: nope")), "nope"),
-    (lambda t: (t / "task.yaml").write_text(TASK_YAML.replace("split: dev", "split: train")), "split"),
-])
+@pytest.mark.parametrize(
+    "breakage, needle",
+    [
+        (lambda t: (t / "task.yaml").write_text(TASK_YAML.replace("demo-001", "Demo_1")), "id"),
+        (lambda t: (t / "bug.patch").unlink(), "bug.patch"),
+        (
+            lambda t: (t / "task.yaml").write_text(TASK_YAML.replace("repo: demo", "repo: nope")),
+            "nope",
+        ),
+        (
+            lambda t: (t / "task.yaml").write_text(TASK_YAML.replace("split: dev", "split: train")),
+            "split",
+        ),
+    ],
+)
 def test_load_tasks_validates(bench: Path, breakage, needle):
     breakage(bench / "tasks" / "demo-001")
     with pytest.raises(ValueError, match=needle):
@@ -76,8 +87,11 @@ def test_build_base_workspace_history(bench: Path, tmp_path: Path):
     assert _git(ws, "log", "--format=%s").splitlines() == ["Import demo"]
     assert "return a + b" not in _git(ws, "log", "-p", "--all")
     assert _git(ws, "status", "--porcelain") == ""
-    for key, want in (("core.symlinks", "true"), ("core.filemode", "true"),
-                      ("core.ignorecase", "false")):
+    for key, want in (
+        ("core.symlinks", "true"),
+        ("core.filemode", "true"),
+        ("core.ignorecase", "false"),
+    ):
         assert _git(ws, "config", "--local", key).strip() == want
     assert (ws / "calc.py").read_bytes() == b"def add(a, b):\n    return a - b\n"
     assert not (ws / "__pycache__").exists()
@@ -89,8 +103,13 @@ def test_real_tasks_protect_test_infrastructure():
 
     for task in load_tasks():
         policy = ToolPolicy(protected_paths=task.protected_paths)
-        for path in ("tests/conftest.py", "conftest.py", "pyproject.toml", "pytest.ini",
-                     "tests/test_heldout_x.py"):
+        for path in (
+            "tests/conftest.py",
+            "conftest.py",
+            "pyproject.toml",
+            "pytest.ini",
+            "tests/test_heldout_x.py",
+        ):
             assert policy.check_write(path), (task.id, path)
         assert policy.check_write(task.expected_files[0]) is None, task.id
         assert (task.heldout_dir / "tests" / "conftest.py").is_file(), task.id
@@ -105,7 +124,9 @@ def test_difficulty_rule_counts_changed_lines():
 
 def test_real_tasks_follow_the_difficulty_rule():
     for task in load_tasks():
-        assert task.difficulty == difficulty_for(task.fix_patch.read_text(encoding="utf-8")), task.id
+        assert task.difficulty == difficulty_for(task.fix_patch.read_text(encoding="utf-8")), (
+            task.id
+        )
 
 
 def test_real_tasks_protect_every_pytest_config_file():

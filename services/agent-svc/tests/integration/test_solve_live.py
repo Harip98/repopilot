@@ -21,8 +21,11 @@ from tests.fakes import tool_reply
 
 pytestmark = [pytest.mark.sandbox, pytest.mark.anyio]
 
-PLAN = {"root_cause": "status filter compares case-sensitively", "files": ["app/store.py"],
-        "acceptance_criteria": ["status=PAID matches paid orders"]}
+PLAN = {
+    "root_cause": "status filter compares case-sensitively",
+    "files": ["app/store.py"],
+    "acceptance_criteria": ["status=PAID matches paid orders"],
+}
 
 
 async def _solve(settings, script: list):
@@ -32,11 +35,23 @@ async def _solve(settings, script: list):
     async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
         run_id = new_run_id()
         state = await prepare_bench_run(task, sandbox, run_id=run_id, auto_approve=True)
-        await recorder.create_run(run_id, repo=task.repo, issue_text=task.issue, task_id=task.id,
-                                  issue_ref=None, model="fake", task_mode="bench",
-                                  sandbox_id=state.sandbox_id)
-        deps = RunDeps(llm=FakeChatModel(script), sandbox=sandbox, registry=build_registry(),
-                       recorder=recorder, pr=NoPR())
+        await recorder.create_run(
+            run_id,
+            repo=task.repo,
+            issue_text=task.issue,
+            task_id=task.id,
+            issue_ref=None,
+            model="fake",
+            task_mode="bench",
+            sandbox_id=state.sandbox_id,
+        )
+        deps = RunDeps(
+            llm=FakeChatModel(script),
+            sandbox=sandbox,
+            registry=build_registry(),
+            recorder=recorder,
+            pr=NoPR(),
+        )
         try:
             result = await start_run(state, deps, saver)
             graded = await grade(task, sandbox, state.sandbox_id)
@@ -59,14 +74,21 @@ async def test_solve_scripted_orders_api_005(settings, conn: psycopg.Connection)
     assert result.state.status == "completed", result.state.failure_reason
     assert result.state.last_tests.passed and "app/store.py" in result.state.diff
     assert graded.resolved, graded.output_tail
-    row = conn.execute("SELECT status, llm_calls, tool_calls FROM runs WHERE id = %s",
-                       (run_id,)).fetchone()
+    row = conn.execute(
+        "SELECT status, llm_calls, tool_calls FROM runs WHERE id = %s", (run_id,)
+    ).fetchone()
     assert row == ("completed", 5, 3)
-    tools = [r[0] for r in conn.execute(
-        "SELECT tool FROM tool_calls WHERE run_id = %s ORDER BY step", (run_id,)).fetchall()]
+    tools = [
+        r[0]
+        for r in conn.execute(
+            "SELECT tool FROM tool_calls WHERE run_id = %s ORDER BY step", (run_id,)
+        ).fetchall()
+    ]
     assert tools == ["search_code", "apply_patch", "run_tests"]
-    assert conn.execute("SELECT count(*) FROM run_events WHERE run_id = %s",
-                        (run_id,)).fetchone()[0] >= 6
+    assert (
+        conn.execute("SELECT count(*) FROM run_events WHERE run_id = %s", (run_id,)).fetchone()[0]
+        >= 6
+    )
 
 
 async def test_unfixed_run_is_not_resolved(settings, conn: psycopg.Connection):

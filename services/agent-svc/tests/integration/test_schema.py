@@ -42,6 +42,36 @@ def test_run_status_check(conn: psycopg.Connection):
         _insert_run(conn, status="bogus")
 
 
+def test_cancelled_status_dropped(conn: psycopg.Connection):
+    """Nothing could ever set it: there is no cancel route or command."""
+    with pytest.raises(psycopg.errors.CheckViolation):
+        _insert_run(conn, status="cancelled")
+
+
+def test_tool_call_refused_defaults_false(conn: psycopg.Connection):
+    run_id = _insert_run(conn)
+    conn.execute(
+        "INSERT INTO tool_calls (run_id, step, tool, args, ok, latency_ms)"
+        " VALUES (%s, 1, 'read_file', '{}', true, 5)",
+        (run_id,),
+    )
+    assert conn.execute(
+        "SELECT refused FROM tool_calls WHERE run_id = %s", (run_id,)
+    ).fetchone() == (False,)
+
+
+def test_approval_unique_per_review_round(conn: psycopg.Connection):
+    run_id = _insert_run(conn)
+    insert = (
+        "INSERT INTO approvals (run_id, revision, decision, decided_by)"
+        " VALUES (%s, %s, 'reject', 'bob')"
+    )
+    conn.execute(insert, (run_id, 0))
+    conn.execute(insert, (run_id, 1))
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        conn.execute(insert, (run_id, 0))
+
+
 def test_eval_result_unique(conn: psycopg.Connection):
     _insert_eval_result(conn, "2026-10-20-dev", "orders-api-001")
     with pytest.raises(psycopg.errors.UniqueViolation):

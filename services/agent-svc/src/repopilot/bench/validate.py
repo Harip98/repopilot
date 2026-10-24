@@ -24,8 +24,12 @@ class ValidationResult(BaseModel):
 
     @property
     def valid(self) -> bool:
-        return (self.bug_applies and self.heldout_fail_on_base and self.heldout_pass_with_fix
-                and self.visible_pass_with_fix)
+        return (
+            self.bug_applies
+            and self.heldout_fail_on_base
+            and self.heldout_pass_with_fix
+            and self.visible_pass_with_fix
+        )
 
 
 async def validate_task(task: Task, sandbox: SandboxClient) -> ValidationResult:

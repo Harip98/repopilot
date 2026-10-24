@@ -18,14 +18,18 @@ pytestmark = pytest.mark.anyio
 
 
 READ_FILE = ToolSpec(
-    name="read_file", description="Read a file.",
+    name="read_file",
+    description="Read a file.",
     parameters={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
 )
 
 
 def _completion(message: dict, usage: dict | None) -> dict:
     body = {
-        "id": "chatcmpl-1", "object": "chat.completion", "created": 0, "model": "m",
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "m",
         "choices": [{"index": 0, "finish_reason": "tool_calls", "message": message}],
     }
     if usage is not None:
@@ -44,26 +48,44 @@ async def test_openai_compat_parses_tool_calls():
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json=_completion(
-            {"role": "assistant", "content": None, "tool_calls": [{
-                "id": "call_1", "type": "function",
-                "function": {"name": "read_file", "arguments": "{\"path\": \"a.py\"}"},
-            }]},
-            {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
-        ))
+        return httpx.Response(
+            200,
+            json=_completion(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": '{"path": "a.py"}'},
+                        }
+                    ],
+                },
+                {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+            ),
+        )
 
     result = await _model(handler).chat([{"role": "user", "content": "hi"}], tools=[READ_FILE])
     assert result.message == AssistantMessage(
-        content=None, tool_calls=[ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}')]
+        content=None,
+        tool_calls=[ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}')],
     )
     assert result.usage == Usage(prompt_tokens=120, completion_tokens=30)
     assert result.finish_reason == "tool_calls"
     assert seen["path"] == "/v1/chat/completions"
     body = seen["body"]
     assert body["model"] == "test-model" and body["temperature"] == 0
-    assert body["tools"] == [{"type": "function", "function": {
-        "name": "read_file", "description": "Read a file.", "parameters": READ_FILE.parameters,
-    }}]
+    assert body["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file.",
+                "parameters": READ_FILE.parameters,
+            },
+        }
+    ]
 
 
 async def test_openai_compat_missing_usage():
@@ -76,19 +98,31 @@ async def test_openai_compat_missing_usage():
 
 
 def test_assistant_message_to_dict_roundtrips_tool_calls():
-    msg = AssistantMessage(content=None, tool_calls=[ToolCall(id="c1", name="git_diff", arguments="{}")])
-    assert msg.to_dict() == {"role": "assistant", "content": None, "tool_calls": [
-        {"id": "c1", "type": "function", "function": {"name": "git_diff", "arguments": "{}"}},
-    ]}
+    msg = AssistantMessage(
+        content=None, tool_calls=[ToolCall(id="c1", name="git_diff", arguments="{}")]
+    )
+    assert msg.to_dict() == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "git_diff", "arguments": "{}"}},
+        ],
+    }
     assert AssistantMessage(content="ok").to_dict() == {"role": "assistant", "content": "ok"}
 
 
 async def test_fake_replays_and_exhausts():
-    first = ChatResult(message=AssistantMessage(content="one"), usage=Usage(prompt_tokens=1, completion_tokens=1))
-    second = ChatResult(message=AssistantMessage(content="two"), usage=Usage(prompt_tokens=2, completion_tokens=2))
+    first = ChatResult(
+        message=AssistantMessage(content="one"), usage=Usage(prompt_tokens=1, completion_tokens=1)
+    )
+    second = ChatResult(
+        message=AssistantMessage(content="two"), usage=Usage(prompt_tokens=2, completion_tokens=2)
+    )
     fake = FakeChatModel([first, second])
     assert (await fake.chat([{"role": "user", "content": "a"}])).message.content == "one"
-    assert (await fake.chat([{"role": "user", "content": "b"}], tools=[READ_FILE])).message.content == "two"
+    assert (
+        await fake.chat([{"role": "user", "content": "b"}], tools=[READ_FILE])
+    ).message.content == "two"
     assert [c["messages"][-1]["content"] for c in fake.calls] == ["a", "b"]
     assert fake.calls[1]["tools"] == [READ_FILE]
     with pytest.raises(AssertionError, match="script exhausted"):
@@ -96,5 +130,7 @@ async def test_fake_replays_and_exhausts():
 
 
 def test_cost_usd():
-    assert cost_usd(Usage(prompt_tokens=1000, completion_tokens=500), 0.4, 1.6) == pytest.approx(0.0012)
+    assert cost_usd(Usage(prompt_tokens=1000, completion_tokens=500), 0.4, 1.6) == pytest.approx(
+        0.0012
+    )
     assert cost_usd(Usage(prompt_tokens=1000, completion_tokens=500), 0.0, 0.0) == 0.0

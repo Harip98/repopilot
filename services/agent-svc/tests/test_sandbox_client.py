@@ -13,7 +13,9 @@ pytestmark = pytest.mark.anyio
 
 
 def _client(handler) -> SandboxClient:
-    return SandboxClient("http://sandbox", "tok-0123456789abcdef", transport=httpx.MockTransport(handler))
+    return SandboxClient(
+        "http://sandbox", "tok-0123456789abcdef", transport=httpx.MockTransport(handler)
+    )
 
 
 async def test_exec_parses_result():
@@ -22,15 +24,30 @@ async def test_exec_parses_result():
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={
-            "exit_code": 1, "stdout": "F", "stderr": "boom", "stdout_truncated": False,
-            "stderr_truncated": True, "timed_out": False, "duration_ms": 420,
-        })
+        return httpx.Response(
+            200,
+            json={
+                "exit_code": 1,
+                "stdout": "F",
+                "stderr": "boom",
+                "stdout_truncated": False,
+                "stderr_truncated": True,
+                "timed_out": False,
+                "duration_ms": 420,
+            },
+        )
 
     async with _client(handler) as sb:
         res = await sb.exec("0123456789abcdef", ["pytest", "-q"], timeout_s=30, cwd="pkg")
-    assert res == ExecResult(exit_code=1, stdout="F", stderr="boom", stdout_truncated=False,
-                             stderr_truncated=True, timed_out=False, duration_ms=420)
+    assert res == ExecResult(
+        exit_code=1,
+        stdout="F",
+        stderr="boom",
+        stdout_truncated=False,
+        stderr_truncated=True,
+        timed_out=False,
+        duration_ms=420,
+    )
     assert seen["path"] == "/v1/sandboxes/0123456789abcdef/exec"
     assert seen["body"] == {"argv": ["pytest", "-q"], "timeout_s": 30, "cwd": "pkg"}
 
@@ -59,8 +76,15 @@ async def test_bearer_header_and_file_roundtrip():
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append((request.method, request.url.path, request.url.params.get("path"),
-                      request.headers.get("authorization"), request.content))
+        calls.append(
+            (
+                request.method,
+                request.url.path,
+                request.url.params.get("path"),
+                request.headers.get("authorization"),
+                request.content,
+            )
+        )
         if request.method == "POST":
             return httpx.Response(201, json={"id": "0123456789abcdef"})
         if request.method == "GET":

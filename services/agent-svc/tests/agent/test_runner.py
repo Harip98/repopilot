@@ -14,8 +14,14 @@ pytestmark = pytest.mark.anyio
 
 
 def _deps(sandbox, script) -> RunDeps:
-    return RunDeps(llm=FakeChatModel(script), sandbox=sandbox, registry=build_registry(),
-                   recorder=MemoryRecorder(), pr=NoPR(), clock=lambda: 1.0)
+    return RunDeps(
+        llm=FakeChatModel(script),
+        sandbox=sandbox,
+        registry=build_registry(),
+        recorder=MemoryRecorder(),
+        pr=NoPR(),
+        clock=lambda: 1.0,
+    )
 
 
 async def test_start_then_resume_across_graph_instances():
@@ -24,8 +30,9 @@ async def test_start_then_resume_across_graph_instances():
     assert started.interrupt is not None and started.state.status == "running"
     assert "app/store.py" in started.interrupt["diff"]
 
-    resumed = await resume_run("run-1", {"decision": "approve", "by": "alice"},
-                               _deps(sandbox, []), saver)
+    resumed = await resume_run(
+        "run-1", {"decision": "approve", "by": "alice"}, _deps(sandbox, []), saver
+    )
     assert resumed.interrupt is None and resumed.state.status == "completed"
 
 
@@ -53,8 +60,13 @@ async def test_run_bench_task_cleans_up_on_error():
     deps = _deps(sandbox, [])
     deps.llm = Exploding()
     with pytest.raises(RuntimeError):
-        await run_bench_task(task, deps, InMemorySaver(), run_id="11111111-1111-1111-1111-111111111111",
-                             auto_approve=True)
+        await run_bench_task(
+            task,
+            deps,
+            InMemorySaver(),
+            run_id="11111111-1111-1111-1111-111111111111",
+            auto_approve=True,
+        )
     assert sandbox.destroyed == ["sbx-1"]
     status, fields = deps.recorder.statuses[-1]
     assert status == "failed" and "unexpected" in fields["error"]
@@ -66,10 +78,92 @@ async def test_run_bench_task_grades_and_records_baseline():
 
     task = next(t for t in load_tasks() if t.id == "orders-api-005")
     sandbox = ScriptedSandbox({"app/store.py": STORE})
-    outcome = await run_bench_task(task, _deps(sandbox, explore_and_edit()), InMemorySaver(),
-                                   run_id="22222222-2222-2222-2222-222222222222", auto_approve=True)
+    deps = _deps(sandbox, explore_and_edit())
+    outcome = await run_bench_task(
+        task,
+        deps,
+        InMemorySaver(),
+        run_id="22222222-2222-2222-2222-222222222222",
+        auto_approve=True,
+    )
     assert outcome.result.state.baseline_tests_passed is True
     assert outcome.graded is not None and sandbox.destroyed == ["sbx-1"]
+    # The same timeline entry the worker writes: the console's "Hidden tests" stop.
+    assert deps.recorder.events[-1] == (
+        "grade",
+        "heldout",
+        {"resolved": outcome.graded.resolved, "exit_code": 0},
+    )
+
+
+async def test_run_bench_task_killed_midway_is_marked_failed():
+    # Ctrl-C under asyncio.run cancels the running task: the run must not stay 'running'.
+    import asyncio
+
+    from repopilot.agent.runner import run_bench_task
+    from repopilot.bench.tasks import load_tasks
+
+    class Waiting:
+        model = "m"
+
+        def __init__(self):
+            self.called = asyncio.Event()
+
+        async def chat(self, messages, tools=None, max_tokens=2048):
+            self.called.set()
+            await asyncio.Event().wait()  # a slow model; the user loses patience
+
+    task = next(t for t in load_tasks() if t.id == "orders-api-005")
+    sandbox = ScriptedSandbox()
+    deps = _deps(sandbox, [])
+    deps.llm = Waiting()
+    job = asyncio.ensure_future(
+        run_bench_task(
+            task,
+            deps,
+            InMemorySaver(),
+            run_id="44444444-4444-4444-4444-444444444444",
+            auto_approve=True,
+        )
+    )
+    await deps.llm.called.wait()
+    job.cancel()  # what asyncio.run does on Ctrl-C
+    with pytest.raises(asyncio.CancelledError):
+        await job
+    assert deps.recorder.statuses[-1] == (
+        "failed",
+        {"failure_reason": "interrupted", "error": "CancelledError"},
+    )
+    assert sandbox.destroyed == ["sbx-1"]
+
+
+async def test_run_bench_task_paused_for_review_is_left_alone():
+    from repopilot.agent.runner import run_bench_task
+    from repopilot.bench.tasks import load_tasks
+
+    task = next(t for t in load_tasks() if t.id == "orders-api-005")
+    sandbox = ScriptedSandbox({"app/store.py": STORE})
+    deps = _deps(sandbox, explore_and_edit())
+    outcome = await run_bench_task(
+        task,
+        deps,
+        InMemorySaver(),
+        run_id="55555555-5555-5555-5555-555555555555",
+        auto_approve=False,
+    )
+    assert outcome.result.interrupt is not None and outcome.graded is None
+    assert deps.recorder.statuses[-1][0] == "awaiting_approval" and sandbox.destroyed == []
+
+
+async def test_pending_nodes():
+    from repopilot.agent.runner import pending_nodes
+
+    saver, sandbox = InMemorySaver(), ScriptedSandbox({"app/store.py": STORE})
+    assert await pending_nodes(saver, "run-1") == ()
+    await start_run(make_state(), _deps(sandbox, explore_and_edit()), saver)
+    assert await pending_nodes(saver, "run-1") == ("approval",)
+    await resume_run("run-1", {"decision": "approve", "by": "a"}, _deps(sandbox, []), saver)
+    assert await pending_nodes(saver, "run-1") == ()
 
 
 async def test_run_bench_task_reports_final_diff_when_run_fails_before_validation():
@@ -80,8 +174,13 @@ async def test_run_bench_task_reports_final_diff_when_run_fails_before_validatio
     task = next(t for t in load_tasks() if t.id == "orders-api-005")
     sandbox = ScriptedSandbox({"app/store.py": STORE})
     script = explore_and_edit()[:3] + [text_reply("thinking")] * 5  # edits, then never calls finish
-    outcome = await run_bench_task(task, _deps(sandbox, script), InMemorySaver(),
-                                   run_id="33333333-3333-3333-3333-333333333333", auto_approve=True)
+    outcome = await run_bench_task(
+        task,
+        _deps(sandbox, script),
+        InMemorySaver(),
+        run_id="33333333-3333-3333-3333-333333333333",
+        auto_approve=True,
+    )
     assert outcome.result.state.failure_reason == "no_tool_calls"
     assert outcome.result.state.diff == ""  # validation never ran
     assert "app/store.py" in outcome.final_diff and outcome.graded is None

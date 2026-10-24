@@ -19,6 +19,13 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch):
     assert Settings().pg_port == 6000
 
 
+def test_code_index_for_worker_runs_is_opt_in(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("REPOPILOT_CODE_INDEX", raising=False)
+    assert Settings(_env_file=None).code_index is False
+    monkeypatch.setenv("REPOPILOT_CODE_INDEX", "true")
+    assert Settings(_env_file=None).code_index is True
+
+
 def test_dsn_contents(monkeypatch: pytest.MonkeyPatch):
     for var in ("PG_PORT", "PG_DB", "PG_USER"):
         monkeypatch.delenv(f"REPOPILOT_{var}", raising=False)
@@ -29,8 +36,13 @@ def test_dsn_contents(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_secrets_hidden_from_repr():
-    s = Settings(_env_file=None, github_token="ghp_SECRET1", llm_api_key="sk-SECRET2",
-                 pg_password="pw-SECRET3", sandbox_token="sbx-SECRET4-0123456789")
+    s = Settings(
+        _env_file=None,
+        github_token="ghp_SECRET1",
+        llm_api_key="sk-SECRET2",
+        pg_password="pw-SECRET3",
+        sandbox_token="sbx-SECRET4-0123456789",
+    )
     text = repr(s) + str(s)
     for secret in ("ghp_SECRET1", "sk-SECRET2", "pw-SECRET3", "sbx-SECRET4-0123456789"):
         assert secret not in text

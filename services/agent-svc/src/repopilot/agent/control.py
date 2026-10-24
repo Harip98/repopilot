@@ -11,8 +11,9 @@ class SubmitPlanArgs(BaseModel):
     root_cause: str = Field(description="What is wrong and why, in a few sentences.")
     files: list[str] = Field(description="Files you expect to change.")
     acceptance_criteria: list[str] = Field(description="Observable behaviour once fixed.")
-    test_targets: list[str] = Field(default_factory=list,
-                                    description="Tests you will add or run to prove the fix.")
+    test_targets: list[str] = Field(
+        default_factory=list, description="Tests you will add or run to prove the fix."
+    )
 
 
 class FinishArgs(BaseModel):
@@ -20,12 +21,14 @@ class FinishArgs(BaseModel):
 
 
 def _spec(name: str, description: str, model: type[BaseModel]) -> ToolSpec:
-    return ToolSpec(name=name, description=description,
-                    parameters=drop_titles(model.model_json_schema()))
+    return ToolSpec(
+        name=name, description=description, parameters=drop_titles(model.model_json_schema())
+    )
 
 
-SUBMIT_PLAN = _spec("submit_plan", "Record your diagnosis and plan; unlocks the editing tools.",
-                    SubmitPlanArgs)
+SUBMIT_PLAN = _spec(
+    "submit_plan", "Record your diagnosis and plan; unlocks the editing tools.", SubmitPlanArgs
+)
 FINISH = _spec("finish", "Submit your change for validation by the full test suite.", FinishArgs)
 CONTROL_TOOLS = {SUBMIT_PLAN.name: SubmitPlanArgs, FINISH.name: FinishArgs}
 

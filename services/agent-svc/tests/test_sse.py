@@ -10,14 +10,16 @@ class LateGradeRepo:
 
     def __init__(self):
         self.polls = 0
-        self.rows = [{"seq": 1, "node": "record", "kind": "completed", "payload": {},
-                      "created_at": "t"}]
+        self.rows = [
+            {"seq": 1, "node": "record", "kind": "completed", "payload": {}, "created_at": "t"}
+        ]
 
     async def events_after(self, run_id, seq):
         self.polls += 1
         if self.polls == 4:
-            self.rows.append({"seq": 2, "node": "grade", "kind": "heldout", "payload": {},
-                              "created_at": "t"})
+            self.rows.append(
+                {"seq": 2, "node": "grade", "kind": "heldout", "payload": {}, "created_at": "t"}
+            )
         return [r for r in self.rows if r["seq"] > seq]
 
     async def status(self, run_id):

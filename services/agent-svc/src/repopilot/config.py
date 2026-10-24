@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     )
 
     pg_host: str = "127.0.0.1"  # not "localhost": Docker binds IPv4 only
-    pg_port: int = 5434  # ind-agent owns 5433
+    pg_port: int = 5434  # not 5432/5433, which another local Postgres often holds
     pg_db: str = "repopilot"
     pg_user: str = "repopilot"
     pg_password: SecretStr = SecretStr("repopilot_dev_pw")
@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 120.0
     embed_model: str = "nomic-embed-text"  # for the optional code index (768 dimensions)
     embed_base_url: str = ""  # defaults to llm_base_url
+    # Give worker runs (API and console) the hybrid find_code index, as `solve --code-index`
+    # does on the CLI. Needs embed_model served at embed_base_url.
+    code_index: bool = False
     llm_price_in: float = 0.0  # USD per 1M prompt tokens; 0 for local models
     llm_price_out: float = 0.0  # USD per 1M completion tokens
     github_token: SecretStr = SecretStr("")  # used host-side only; never passed into the sandbox
@@ -66,8 +69,12 @@ class Settings(BaseSettings):
 
     def dsn(self) -> str:
         return make_conninfo(
-            host=self.pg_host, port=self.pg_port, dbname=self.pg_db, user=self.pg_user,
-            password=self.pg_password.get_secret_value(), connect_timeout=5,
+            host=self.pg_host,
+            port=self.pg_port,
+            dbname=self.pg_db,
+            user=self.pg_user,
+            password=self.pg_password.get_secret_value(),
+            connect_timeout=5,
         )
 
 

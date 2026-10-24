@@ -4,13 +4,32 @@ from repopilot.eval.score import EvalResult, percentile, render_markdown, summar
 
 
 def result(task_id: str, **kw) -> EvalResult:
-    base = {"eval_run": "e1", "task_id": task_id, "run_id": None, "model": "m",
-            "difficulty": "simple", "split": "dev", "status": "completed", "failure_reason": None,
-            "resolved": True, "patch_applied": True, "visible_tests_passed": True,
-            "baseline_tests_passed": True, "retries": 0, "llm_calls": 5, "tool_calls": 4,
-            "tool_failures": 0, "unauthorized_attempts": 0, "test_files_modified": False,
-            "latency_ms": 60_000, "prompt_tokens": 1000, "completion_tokens": 100,
-            "cost_usd": 0.01, "heldout_exit_code": 0, "error": None}
+    base = {
+        "eval_run": "e1",
+        "task_id": task_id,
+        "run_id": None,
+        "model": "m",
+        "difficulty": "simple",
+        "split": "dev",
+        "status": "completed",
+        "failure_reason": None,
+        "resolved": True,
+        "patch_applied": True,
+        "visible_tests_passed": True,
+        "baseline_tests_passed": True,
+        "retries": 0,
+        "llm_calls": 5,
+        "tool_calls": 4,
+        "tool_failures": 0,
+        "unauthorized_attempts": 0,
+        "test_files_modified": False,
+        "latency_ms": 60_000,
+        "prompt_tokens": 1000,
+        "completion_tokens": 100,
+        "cost_usd": 0.01,
+        "heldout_exit_code": 0,
+        "error": None,
+    }
     return EvalResult(**(base | kw))
 
 
@@ -35,15 +54,43 @@ def test_score_edges():
 def test_summarize_rates():
     rows = [
         result("a-001"),
-        result("a-002", resolved=False, status="failed", failure_reason="tests_failing",
-               visible_tests_passed=False, retries=3, tool_calls=10, tool_failures=4,
-               latency_ms=120_000, difficulty="complex"),
-        result("a-003", resolved=False, patch_applied=False, visible_tests_passed=False,
-               status="failed", failure_reason="budget:llm_calls", unauthorized_attempts=2,
-               test_files_modified=True, latency_ms=30_000),
-        result("a-004", status="error", resolved=False, patch_applied=False,
-               visible_tests_passed=False, error="APIConnectionError", llm_calls=0, tool_calls=0,
-               prompt_tokens=0, completion_tokens=0, cost_usd=0.0, latency_ms=1_000),
+        result(
+            "a-002",
+            resolved=False,
+            status="failed",
+            failure_reason="tests_failing",
+            visible_tests_passed=False,
+            retries=3,
+            tool_calls=10,
+            tool_failures=4,
+            latency_ms=120_000,
+            difficulty="complex",
+        ),
+        result(
+            "a-003",
+            resolved=False,
+            patch_applied=False,
+            visible_tests_passed=False,
+            status="failed",
+            failure_reason="budget:llm_calls",
+            unauthorized_attempts=2,
+            test_files_modified=True,
+            latency_ms=30_000,
+        ),
+        result(
+            "a-004",
+            status="error",
+            resolved=False,
+            patch_applied=False,
+            visible_tests_passed=False,
+            error="APIConnectionError",
+            llm_calls=0,
+            tool_calls=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=0.0,
+            latency_ms=1_000,
+        ),
     ]
     s = summarize(rows)
     assert (s.n, s.resolved, s.errors) == (4, 1, 1)
@@ -59,8 +106,10 @@ def test_summarize_rates():
 
 
 def test_render_markdown_has_table():
-    rows = [result("a-001"), result("a-002", resolved=False, status="failed",
-                                    failure_reason="tests_failing")]
+    rows = [
+        result("a-001"),
+        result("a-002", resolved=False, status="failed", failure_reason="tests_failing"),
+    ]
     md = render_markdown("e1", {"model": "qwen", "git_sha": "abc123"}, summarize(rows), rows)
     assert "| Resolution rate | 50.0% (1/2) |" in md
     assert "qwen" in md and "a-002" in md and "tests_failing" in md
@@ -73,14 +122,20 @@ def test_heldout_failures_have_their_own_bucket():
 
 
 def test_harness_errors_do_not_skew_latency():
-    rows = [result("a-001", latency_ms=10_000),
-            result("a-002", status="error", resolved=False, latency_ms=9_000_000, error="x")]
+    rows = [
+        result("a-001", latency_ms=10_000),
+        result("a-002", status="error", resolved=False, latency_ms=9_000_000, error="x"),
+    ]
     s = summarize(rows)
     assert s.p50_latency_s == 10.0 and s.p95_latency_s == 10.0
 
 
 def test_task_table_survives_pipes_and_newlines():
-    md = render_markdown("e1", {}, summarize([]), [
-        result("a-001", resolved=False, status="error", error="Boom | bad\nline two")])
+    md = render_markdown(
+        "e1",
+        {},
+        summarize([]),
+        [result("a-001", resolved=False, status="error", error="Boom | bad\nline two")],
+    )
     row = next(line for line in md.splitlines() if line.startswith("| a-001"))
     assert row.count("|") == 11 and r"Boom \| bad line two" in row

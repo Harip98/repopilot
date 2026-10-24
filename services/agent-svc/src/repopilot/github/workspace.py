@@ -4,6 +4,7 @@ workspace, read the repo's RepoPilot config, and start a sandbox."""
 import io
 import tarfile
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import yaml
@@ -12,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from repopilot.agent.state import Budget, GitHubTarget, RunState
 from repopilot.bench.workspace import commit_all, init_repo
 from repopilot.github.client import GitHubClient
-from repopilot.sandbox_client import SandboxClient
+from repopilot.sandbox_client import SANDBOX_COMMANDS, SandboxClient
 
 CONFIG_FILE = ".repopilot.yml"
 SANDBOX_IMAGE_PREFIXES = ("repopilot-sandbox-", "repopilot-bench-")
@@ -34,6 +35,17 @@ class RepoConfig(BaseModel):
     def _allowlisted(cls, v: str) -> str:
         if not v.startswith(SANDBOX_IMAGE_PREFIXES):
             raise ValueError("image must be a repopilot-sandbox-* or repopilot-bench-* image")
+        return v
+
+    @field_validator("test_command")
+    @classmethod
+    def _runnable(cls, v: list[str]) -> list[str]:
+        # Refused here, with the reason, rather than as a 400 from the sandbox's baseline run.
+        if v[0] not in SANDBOX_COMMANDS:
+            raise ValueError(
+                f"test_command must start with a program the sandbox runs "
+                f"({', '.join(sorted(SANDBOX_COMMANDS))}), not {v[0]!r}"
+            )
         return v
 
 
@@ -79,9 +91,18 @@ def parse_issue_ref(issue_ref: str) -> tuple[str, int]:
     return repo, int(number)
 
 
-async def prepare_github_run(run: dict, *, run_id: str, github: GitHubClient,
-                             sandbox: SandboxClient, auto_approve: bool = False,
-                             budget: Budget | None = None) -> RunState:
+async def prepare_github_run(
+    run: dict,
+    *,
+    run_id: str,
+    github: GitHubClient,
+    sandbox: SandboxClient,
+    auto_approve: bool = False,
+    budget: Budget | None = None,
+    on_workspace: Callable[[Path], Awaitable[None]] | None = None,
+) -> RunState:
+    """`on_workspace` sees the imported host copy before the sandbox starts (e.g. to build the
+    code index)."""
     repo, number = parse_issue_ref(run["issue_ref"])
     issue = await github.get_issue(repo, number)
     branch, sha = await github.default_branch(repo)
@@ -92,6 +113,8 @@ async def prepare_github_run(run: dict, *, run_id: str, github: GitHubClient,
         config = load_repo_config(workspace)
         init_repo(workspace)
         commit_all(workspace, f"Import {repo}@{sha[:12]}")
+        if on_workspace is not None:
+            await on_workspace(workspace)
         sandbox_id = await sandbox.create(config.image)
         try:
             await sandbox.upload_dir(sandbox_id, workspace)
@@ -100,10 +123,21 @@ async def prepare_github_run(run: dict, *, run_id: str, github: GitHubClient,
             await sandbox.destroy(sandbox_id)
             raise
     return RunState(
-        run_id=run_id, repo=repo, issue_title=issue.title, issue_text=issue.body or issue.title,
-        sandbox_id=sandbox_id, test_command=config.test_command,
-        protected_paths=config.protected_paths, auto_approve=auto_approve,
-        budget=budget or Budget(), baseline_tests_passed=baseline.exit_code == 0,
-        github=GitHubTarget(repo=repo, issue_number=number, issue_url=issue.html_url,
-                            base_branch=branch, base_sha=sha),
+        run_id=run_id,
+        repo=repo,
+        issue_title=issue.title,
+        issue_text=issue.body or issue.title,
+        sandbox_id=sandbox_id,
+        test_command=config.test_command,
+        protected_paths=config.protected_paths,
+        auto_approve=auto_approve,
+        budget=budget or Budget(),
+        baseline_tests_passed=baseline.exit_code == 0,
+        github=GitHubTarget(
+            repo=repo,
+            issue_number=number,
+            issue_url=issue.html_url,
+            base_branch=branch,
+            base_sha=sha,
+        ),
     )

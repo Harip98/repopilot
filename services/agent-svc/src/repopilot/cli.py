@@ -1,5 +1,6 @@
 """`repopilot` command line."""
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -11,12 +12,13 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 def configure_logging() -> None:
     """INFO for RepoPilot; HTTP clients only from WARNING, because request URLs can carry
-    secrets (a private repository's tarball redirect has a short-lived token in its query)."""
+    secrets (a private repository's tarball redirect has a short-lived token in its query).
+    The GitHub and sandbox clients use httpx; the openai SDK (and mcp) use httpx2."""
     import logging
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logging.getLogger("repopilot").setLevel(logging.INFO)
-    for name in ("httpx", "httpcore"):
+    for name in ("httpx", "httpcore", "httpx2", "httpcore2"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
@@ -81,7 +83,9 @@ def bench_build_images() -> None:
 
 
 @bench_app.command("validate")
-def bench_validate(task_id: str | None = typer.Option(None, "--task", help="Only this task.")) -> None:
+def bench_validate(
+    task_id: str | None = typer.Option(None, "--task", help="Only this task."),
+) -> None:
     """Check every task: bug applies, held-out tests fail on it, reference fix passes them."""
     import anyio
 
@@ -97,16 +101,18 @@ def bench_validate(task_id: str | None = typer.Option(None, "--task", help="Only
             for task in tasks:
                 r = await validate_task(task, sandbox)
                 ok &= r.valid
-                typer.echo(f"{task.id}\t{'valid' if r.valid else 'INVALID'}\t"
-                           f"visible_on_base={'pass' if r.visible_pass_on_base else 'fail'}"
-                           + ("" if r.valid else f"\n{r.detail}"))
+                typer.echo(
+                    f"{task.id}\t{'valid' if r.valid else 'INVALID'}\t"
+                    f"visible_on_base={'pass' if r.visible_pass_on_base else 'fail'}"
+                    + ("" if r.valid else f"\n{r.detail}")
+                )
         return ok
 
     if not anyio.run(run):
         raise typer.Exit(1)
 
 
-def _deps(sandbox, recorder, model: str | None, code_search=None):
+def _deps(sandbox, recorder, model: str | None, code_search=None, pr=None):
     from repopilot.agent.deps import RunDeps
     from repopilot.agent.pr import NoPR
     from repopilot.config import get_settings
@@ -114,35 +120,62 @@ def _deps(sandbox, recorder, model: str | None, code_search=None):
     from repopilot.tools.builtin import build_registry
 
     s = get_settings()
-    return RunDeps(llm=get_chat_model(model), sandbox=sandbox,
-                   registry=build_registry(find_code_tool=code_search is not None),
-                   recorder=recorder, pr=NoPR(), price_in=s.llm_price_in, price_out=s.llm_price_out,
-                   code_search=code_search)
+    return RunDeps(
+        llm=get_chat_model(model),
+        sandbox=sandbox,
+        registry=build_registry(find_code_tool=code_search is not None),
+        recorder=recorder,
+        pr=pr or NoPR(),
+        price_in=s.llm_price_in,
+        price_out=s.llm_price_out,
+        code_search=code_search,
+    )
 
 
-def _code_index_hooks(enabled: bool, run_id: str):
-    """(code_search, on_workspace, drop) for a run with the hybrid code index, or Nones. Call
-    drop once the run is over: the index is per run and goes stale after the agent's edits."""
-    if not enabled:
-        return None, None, None
+def _code_index():
     from repopilot.code_index import CodeIndex
     from repopilot.config import get_settings
     from repopilot.llm.embeddings import OpenAICompatEmbedder
 
     s = get_settings()
-    index = CodeIndex(s.dsn(), OpenAICompatEmbedder(s.embed_base_url or s.llm_base_url,
-                                                    s.llm_api_key.get_secret_value(), s.embed_model))
+    return CodeIndex(
+        s.dsn(),
+        OpenAICompatEmbedder(
+            s.embed_base_url or s.llm_base_url, s.llm_api_key.get_secret_value(), s.embed_model
+        ),
+    )
 
-    async def search(query: str):
-        return await index.search(run_id, query)
 
-    async def build(workspace) -> None:
-        await index.index(run_id, workspace)
+def _code_index_hooks(enabled: bool, run_id: str):
+    """The run's hybrid code index (build, search, drop), or None. Drop it once the run is
+    over: the index is per run and goes stale after the agent's edits."""
+    return _code_index().for_run(run_id) if enabled else None
 
-    async def drop() -> None:
-        await index.drop(run_id)
 
-    return search, build, drop
+async def _run_index_if_built(run_id: str):
+    """The run's code index if one was built for it (`solve --code-index`, or a worker with
+    REPOPILOT_CODE_INDEX), so a revision after review keeps find_code."""
+    import logging
+
+    try:
+        index = _code_index()
+        return index.for_run(run_id) if await index.exists(run_id) else None
+    except Exception:
+        logging.getLogger("repopilot.cli").warning(
+            "could not look up the code index of %s", run_id, exc_info=True
+        )
+        return None
+
+
+async def _drop_index(index) -> None:
+    if index is None:
+        return
+    try:
+        await index.drop()
+    except Exception:
+        import logging
+
+        logging.getLogger("repopilot.cli").warning("could not drop a code index", exc_info=True)
 
 
 def _report(result, run_id: str) -> None:
@@ -151,20 +184,28 @@ def _report(result, run_id: str) -> None:
         typer.echo(f"plan: {state.plan.root_cause}\n  files: {', '.join(state.plan.files)}")
     if result.interrupt:
         payload = result.interrupt
-        typer.echo(f"\n--- diff ---\n{payload['diff']}--- tests: exit {payload['tests']['exit_code']} ---")
+        typer.echo(
+            f"\n--- diff ---\n{payload['diff']}--- tests: exit {payload['tests']['exit_code']} ---"
+        )
         typer.echo(payload["tests"]["output_tail"][-1500:])
         if payload["tests"].get("passed_before_change"):
-            typer.echo("note: the test suite also passed before this change, so a green run "
-                       "alone does not show the issue is fixed")
+            typer.echo(
+                "note: the test suite also passed before this change, so a green run "
+                "alone does not show the issue is fixed"
+            )
         typer.echo(f"\nsummary: {payload['summary']}")
         typer.echo(f"awaiting approval: repopilot approve {run_id} [--reject --comment TEXT]")
         typer.echo("the sandbox is reaped 2 h after the run started; approve before then")
         return
     u = state.usage
-    typer.echo(f"status: {state.status}" + (f" ({state.failure_reason})" if state.failure_reason else ""))
-    typer.echo(f"llm calls {u.llm_calls}, tool calls {u.tool_calls} ({u.tool_failures} failed, "
-               f"{u.unauthorized_attempts} denied), tokens {u.prompt_tokens}+{u.completion_tokens}, "
-               f"retries {state.retries}")
+    typer.echo(
+        f"status: {state.status}" + (f" ({state.failure_reason})" if state.failure_reason else "")
+    )
+    typer.echo(
+        f"llm calls {u.llm_calls}, tool calls {u.tool_calls} ({u.tool_failures} failed, "
+        f"{u.unauthorized_attempts} denied), tokens {u.prompt_tokens}+{u.completion_tokens}, "
+        f"retries {state.retries}"
+    )
 
 
 def _report_grade(graded) -> None:
@@ -177,7 +218,9 @@ def solve(
     task_id: str = typer.Option(..., "--task", help="Benchmark task id, e.g. orders-api-005."),
     auto_approve: bool = typer.Option(False, help="Skip the human approval step."),
     model: str | None = typer.Option(None, help="Override REPOPILOT_LLM_MODEL."),
-    code_index: bool = typer.Option(False, help="Index the workspace and give the agent find_code."),
+    code_index: bool = typer.Option(
+        False, help="Index the workspace and give the agent find_code."
+    ),
 ) -> None:
     """Run the agent on a benchmark task until it needs approval or finishes."""
     from repopilot.agent.pg_recorder import PgRecorder
@@ -197,15 +240,23 @@ def solve(
         try:
             async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
                 run_id = new_run_id()
-                search, build, drop = _code_index_hooks(code_index, run_id)
-                deps = _deps(sandbox, recorder, model, search)
+                index = _code_index_hooks(code_index, run_id)
+                deps = _deps(sandbox, recorder, model, index.search if index else None)
                 typer.echo(f"run {run_id} ({task.id}, model {deps.llm.model})")
                 try:
-                    outcome = await run_bench_task(task, deps, saver, run_id=run_id,
-                                                   auto_approve=auto_approve, on_workspace=build)
-                finally:
-                    if drop:
-                        await drop()
+                    outcome = await run_bench_task(
+                        task,
+                        deps,
+                        saver,
+                        run_id=run_id,
+                        auto_approve=auto_approve,
+                        on_workspace=index.build if index else None,
+                    )
+                except BaseException:
+                    await _drop_index(index)
+                    raise
+                if outcome.result.interrupt is None:
+                    await _drop_index(index)  # kept while paused: `approve` searches it again
                 _report(outcome.result, run_id)
                 _report_grade(outcome.graded)
         finally:
@@ -218,32 +269,55 @@ def solve(
 def approve(
     run_id: str,
     reject: bool = typer.Option(False, help="Reject instead of approving."),
-    comment: str | None = typer.Option(None, help="Feedback; a rejection with a comment gets one revision."),
+    comment: str | None = typer.Option(
+        None, help="Feedback; a rejection with a comment gets one revision."
+    ),
     by: str | None = typer.Option(None, help="Reviewer name (default: current user)."),
 ) -> None:
-    """Approve or reject a run that is waiting for review."""
+    """Approve or reject a run that is waiting for review. Approving a GitHub-issue run opens
+    its draft pull request, which needs REPOPILOT_GITHUB_TOKEN."""
     import getpass
 
     from repopilot.agent.pg_recorder import PgRecorder
+    from repopilot.agent.pr import NoPR
     from repopilot.agent.runner import (
         NotAwaitingApproval,
         RunNotFound,
-        grade,
+        grade_and_record,
+        mark_failed,
         postgres_checkpointer,
         resume_run,
         run_async,
     )
     from repopilot.bench.tasks import load_tasks
     from repopilot.config import get_settings
+    from repopilot.github import GitHubClient, GitHubPR
     from repopilot.sandbox_client import SandboxError, get_sandbox_client
 
-    dsn = get_settings().dsn()
-    decision = {"decision": "reject" if reject else "approve", "comment": comment,
-                "by": by or getpass.getuser()}
+    s = get_settings()
+    dsn, token = s.dsn(), s.github_token.get_secret_value()
+    decision = {
+        "decision": "reject" if reject else "approve",
+        "comment": comment,
+        "by": by or getpass.getuser(),
+    }
 
     async def run() -> bool:
         recorder = PgRecorder(dsn)
+        github = None
         try:
+            row = await recorder.get_run(run_id)
+            if row is not None and row["task_mode"] == "github":
+                if not token:
+                    # Refused before the claim, so the run stays awaiting approval.
+                    typer.echo(
+                        f"run {run_id} fixes a GitHub issue: approving it opens a pull "
+                        "request, so set REPOPILOT_GITHUB_TOKEN first (or decide in the "
+                        "console). The run is still awaiting approval.",
+                        err=True,
+                    )
+                    return False
+                github = GitHubClient(token, s.github_api_url)
             # Claim first: of two concurrent `approve` commands only one may resume the run.
             claimed = await recorder.claim_for_approval(run_id)
             if claimed is None:
@@ -252,6 +326,7 @@ def approve(
             task = next((t for t in load_tasks() if t.id == claimed["task_id"]), None)
             async with get_sandbox_client() as sandbox, postgres_checkpointer(dsn) as saver:
                 result = None
+                index = await _run_index_if_built(run_id)
                 try:
                     try:
                         await sandbox.exec(claimed["sandbox_id"], ["git", "--version"])
@@ -259,19 +334,32 @@ def approve(
                         await recorder.status(run_id, "failed", failure_reason="sandbox_expired")
                         typer.echo("the run's sandbox has expired; start a new run", err=True)
                         return False
+                    deps = _deps(
+                        sandbox,
+                        recorder,
+                        claimed["model"],
+                        index.search if index else None,
+                        pr=GitHubPR(github, sandbox) if github else NoPR(),
+                    )
                     try:
-                        result = await resume_run(run_id, decision,
-                                                  _deps(sandbox, recorder, claimed["model"]), saver)
+                        result = await resume_run(run_id, decision, deps, saver)
                     except (RunNotFound, NotAwaitingApproval) as exc:
+                        # Claimed but not resumable: fail it rather than leave it 'running'.
+                        await mark_failed(recorder, run_id, exc)
                         typer.echo(str(exc), err=True)
                         return False
                     _report(result, run_id)
-                    if (task is not None and result.interrupt is None
-                            and result.state.status in ("completed", "pr_opened")):
-                        _report_grade(await grade(task, sandbox, claimed["sandbox_id"]))
-                except Exception as exc:
-                    await recorder.status(run_id, "failed", failure_reason="error",
-                                          error=f"{type(exc).__name__}: {exc}"[:2000])
+                    if (
+                        task is not None
+                        and result.interrupt is None
+                        and result.state.status in ("completed", "pr_opened")
+                    ):
+                        _report_grade(
+                            await grade_and_record(task, deps, run_id, claimed["sandbox_id"])
+                        )
+                except BaseException as exc:  # Ctrl-C too: nothing else would finish the run
+                    if result is None or result.interrupt is None:
+                        await mark_failed(recorder, run_id, exc)
                     raise
                 finally:
                     if result is None or result.interrupt is None:
@@ -279,9 +367,12 @@ def approve(
                             await sandbox.destroy(claimed["sandbox_id"])
                         except SandboxError:
                             pass
+                        await _drop_index(index)
             return True
         finally:
             await recorder.close()
+            if github is not None:
+                await github.aclose()
 
     if not run_async(run):
         raise typer.Exit(1)
@@ -298,10 +389,14 @@ def runs(limit: int = typer.Option(20, help="How many recent runs to show.")) ->
         rows = conn.execute(
             "SELECT id, coalesce(task_id, repo), status, coalesce(failure_reason, ''), coalesce(model, ''),"
             " llm_calls, tool_calls, prompt_tokens + completion_tokens, created_at"
-            " FROM runs ORDER BY created_at DESC LIMIT %s", (limit,)).fetchall()
+            " FROM runs ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        ).fetchall()
     for r in rows:
-        typer.echo(f"{r[0]}  {r[1]:<16} {r[2]:<18} {r[3]:<22} {r[4]:<24} "
-                   f"llm={r[5]} tools={r[6]} tokens={r[7]}  {r[8]:%Y-%m-%d %H:%M}")
+        typer.echo(
+            f"{r[0]}  {r[1]:<16} {r[2]:<18} {r[3]:<22} {r[4]:<24} "
+            f"llm={r[5]} tools={r[6]} tokens={r[7]}  {r[8]:%Y-%m-%d %H:%M}"
+        )
 
 
 @bench_app.command("freeze")
@@ -316,8 +411,11 @@ def bench_freeze(note: str = typer.Option(..., help="Why the split is being (re)
     write_freeze(tasks)
     log = FREEZE_FILE.parent / "FREEZE_LOG.md"
     if not log.exists():
-        log.write_text("# Test split freezes\n\n| Date (UTC) | Tasks | Note |\n|---|---|---|\n",
-                       encoding="utf-8", newline="\n")
+        log.write_text(
+            "# Test split freezes\n\n| Date (UTC) | Tasks | Note |\n|---|---|---|\n",
+            encoding="utf-8",
+            newline="\n",
+        )
     with log.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(f"| {datetime.now(UTC):%Y-%m-%d %H:%M} | {len(tasks)} | {note} |\n")
     typer.echo(f"froze {len(tasks)} test tasks into {FREEZE_FILE.name}")
@@ -340,9 +438,13 @@ def eval_run(
     name: str = typer.Option(..., help="Eval name; rerunning the same name resumes it."),
     split: str = typer.Option("dev", help="dev, test or all"),
     model: str | None = typer.Option(None, help="Override REPOPILOT_LLM_MODEL."),
-    task_id: Annotated[list[str] | None, typer.Option("--task", help="Only these task ids.")] = None,
+    task_id: Annotated[
+        list[str] | None, typer.Option("--task", help="Only these task ids.")
+    ] = None,
     allow_unfrozen: bool = typer.Option(False, help="Run the test split even if it changed."),
-    max_seconds: float = typer.Option(1200.0, help="Per-task wall-clock budget (slow local GPUs need more)."),
+    max_seconds: float = typer.Option(
+        1200.0, help="Per-task wall-clock budget (slow local GPUs need more)."
+    ),
     code_index: bool = typer.Option(False, help="Give the agent the hybrid find_code index."),
 ) -> None:
     """Run the agent with auto-approval over a split and write eval/reports/<name>.*"""
@@ -361,10 +463,17 @@ def eval_run(
     from repopilot.sandbox_client import get_sandbox_client
 
     tasks = [t for t in _eval_tasks(split) if not task_id or t.id in task_id]
-    if split in ("test", "all") and not allow_unfrozen:
-        problems = check_frozen([t for t in tasks if t.split == "test"]) if not task_id else []
+    if unknown := sorted(set(task_id or ()) - {t.id for t in tasks}):
+        typer.echo(f"no {split} task {', '.join(unknown)}", err=True)
+        raise typer.Exit(1)
+    test_tasks = [t for t in tasks if t.split == "test"]
+    if test_tasks and not allow_unfrozen:
+        # With --task, each selected test task must still match its freeze.
+        problems = check_frozen(test_tasks, subset=bool(task_id))
         if problems:
-            typer.echo("the test split differs from its freeze:\n  " + "\n  ".join(problems), err=True)
+            typer.echo(
+                "the test split differs from its freeze:\n  " + "\n  ".join(problems), err=True
+            )
             raise typer.Exit(1)
     settings = get_settings()
     budget = Budget(max_seconds=max_seconds)
@@ -378,26 +487,41 @@ def eval_run(
                 model_name = _deps(sandbox, recorder, model).llm.model
 
                 async def run_task(task, run_id):
-                    search, build, drop = _code_index_hooks(code_index, run_id)
-                    deps = _deps(sandbox, recorder, model, search)
+                    index = _code_index_hooks(code_index, run_id)
+                    deps = _deps(sandbox, recorder, model, index.search if index else None)
                     try:
-                        return await run_bench_task(task, deps, saver, run_id=run_id,
-                                                    auto_approve=True, budget=budget,
-                                                    on_workspace=build)
+                        return await run_bench_task(
+                            task,
+                            deps,
+                            saver,
+                            run_id=run_id,
+                            auto_approve=True,
+                            budget=budget,
+                            on_workspace=index.build if index else None,
+                        )
                     finally:
-                        if drop:
-                            await drop()
+                        await _drop_index(index)  # auto-approved: never paused
 
                 def progress(r) -> None:
-                    typer.echo(f"{r.task_id:<16} {'RESOLVED' if r.resolved else 'unresolved':<11}"
-                               f"{r.status:<10} {r.failure_reason or r.error or ''}"[:160])
+                    typer.echo(
+                        f"{r.task_id:<16} {'RESOLVED' if r.resolved else 'unresolved':<11}"
+                        f"{r.status:<10} {r.failure_reason or r.error or ''}"[:160]
+                    )
 
-                meta = eval_meta(name, model_name, settings.llm_base_url, tasks,
-                                 budget.model_dump(), split=split)
+                meta = eval_meta(
+                    name, model_name, settings.llm_base_url, tasks, budget.model_dump(), split=split
+                )
                 try:
                     results = await run_eval(
-                        name, tasks, run_task, store, model=model_name, on_result=progress,
-                        meta=meta, on_saved=lambda rows: write_report(name, rows, meta))
+                        name,
+                        tasks,
+                        run_task,
+                        store,
+                        model=model_name,
+                        on_result=progress,
+                        meta=meta,
+                        on_saved=lambda rows: write_report(name, rows, meta),
+                    )
                 except EvalConfigMismatch as exc:
                     typer.echo(str(exc), err=True)
                     raise typer.Exit(1) from exc
@@ -425,6 +549,41 @@ def eval_report(name: str) -> None:
     meta_path = REPORTS_DIR / f"{name}.meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     typer.echo(f"report: {write_report(name, results, meta)}")
+
+
+@eval_app.command("import")
+def eval_import(
+    directory: Annotated[
+        Path | None,
+        typer.Argument(
+            help="Directory of <name>.jsonl and <name>.meta.json reports (default: eval/reports)."
+        ),
+    ] = None,
+    replace: bool = typer.Option(False, help="Overwrite evals already in the database."),
+) -> None:
+    """Load written eval reports into the database, so the console and `eval compare` show
+    them (e.g. the committed results on a fresh clone). The files are only read, and evals
+    already in the database are skipped, so importing again changes nothing."""
+    from repopilot.agent.runner import run_async
+    from repopilot.config import get_settings
+    from repopilot.eval.runner import REPORTS_DIR, PgResultStore, import_reports
+
+    source = directory or REPORTS_DIR
+    if not source.is_dir():
+        typer.echo(f"no directory {source}", err=True)
+        raise typer.Exit(1)
+
+    async def run():
+        return await import_reports(PgResultStore(get_settings().dsn()), source, replace=replace)
+
+    outcomes = run_async(run)
+    if not outcomes:
+        typer.echo(f"no reports (*.jsonl) in {source}", err=True)
+        raise typer.Exit(1)
+    for name, status, detail in outcomes:
+        typer.echo(f"{name}\t{status}\t{detail}")
+    if any(status == "invalid" for _, status, _ in outcomes):
+        raise typer.Exit(1)
 
 
 @eval_app.command("compare")
@@ -467,8 +626,10 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address."),
     port: int = typer.Option(8000, help="Port."),
     allow_default_token: bool = typer.Option(
-        False, help="Bind off loopback with the default token (only behind a loopback-only "
-                    "port mapping, as in docker-compose)."),
+        False,
+        help="Bind off loopback with the default token (only behind a loopback-only "
+        "port mapping, as in docker-compose).",
+    ),
 ) -> None:
     """Run the HTTP API (runs, SSE timeline, approvals, evals)."""
     import uvicorn
@@ -488,10 +649,18 @@ def serve(
         typer.echo(problem, err=True)
         raise typer.Exit(1)
     tasks = {t.id: t for t in load_tasks()}
-    app_ = create_app(ApiServices(
-        repo=RunsRepo(s.dsn()), claims=PgRecorder(s.dsn()), queue=JobQueue(s.redis_url),
-        results=PgResultStore(s.dsn()), load_task=tasks.get,
-        token=s.api_token.get_secret_value(), ui_origin=s.ui_origin, default_model=s.llm_model))
+    app_ = create_app(
+        ApiServices(
+            repo=RunsRepo(s.dsn()),
+            claims=PgRecorder(s.dsn()),
+            queue=JobQueue(s.redis_url),
+            results=PgResultStore(s.dsn()),
+            load_task=tasks.get,
+            token=s.api_token.get_secret_value(),
+            ui_origin=s.ui_origin,
+            default_model=s.llm_model,
+        )
+    )
     # Served on our own event loop: psycopg's async mode needs a selector loop on Windows.
     server = uvicorn.Server(uvicorn.Config(app_, host=host, port=port, log_level="info"))
     run_async(server.serve)
@@ -525,24 +694,43 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
         recorder = PgRecorder(s.dsn())
         queue = JobQueue(s.redis_url)
         github = GitHubClient(token, s.github_api_url) if token else None
+        # REPOPILOT_CODE_INDEX: every run gets find_code, as with `solve --code-index`.
+        index = _code_index() if s.code_index else None
         try:
             async with get_sandbox_client() as sandbox, postgres_checkpointer(s.dsn()) as saver:
+
                 def deps_for(model: str | None) -> RunDeps:
                     return RunDeps(
-                        llm=get_chat_model(model), sandbox=sandbox, registry=build_registry(),
-                        recorder=recorder, pr=GitHubPR(github, sandbox) if github else NoPR(),
-                        price_in=s.llm_price_in, price_out=s.llm_price_out)
+                        llm=get_chat_model(model),
+                        sandbox=sandbox,
+                        registry=build_registry(find_code_tool=index is not None),
+                        recorder=recorder,
+                        pr=GitHubPR(github, sandbox) if github else NoPR(),
+                        price_in=s.llm_price_in,
+                        price_out=s.llm_price_out,
+                    )
 
-                async def prepare_github(run: dict, deps: RunDeps):
+                async def prepare_github(run: dict, deps: RunDeps, on_workspace=None):
                     if github is None:
                         raise JobError("REPOPILOT_GITHUB_TOKEN is not set")
                     # Never auto-approved: a pull request always waits for a person.
-                    return await prepare_github_run(run, run_id=run["run_id"], github=github,
-                                                    sandbox=sandbox, auto_approve=False)
+                    return await prepare_github_run(
+                        run,
+                        run_id=run["run_id"],
+                        github=github,
+                        sandbox=sandbox,
+                        auto_approve=False,
+                        on_workspace=on_workspace,
+                    )
 
-                services = WorkerServices(deps_for=deps_for, checkpointer=saver,
-                                          recorder=recorder, load_task=tasks.get,
-                                          prepare_github=prepare_github)
+                services = WorkerServices(
+                    deps_for=deps_for,
+                    checkpointer=saver,
+                    recorder=recorder,
+                    load_task=tasks.get,
+                    prepare_github=prepare_github,
+                    code_index=index.for_run if index else None,
+                )
 
                 async def handle(job: dict) -> None:
                     await handle_job(job, services)
@@ -550,9 +738,16 @@ def worker(name: str = typer.Option("worker-1", help="Consumer name in the Redis
                 async def exhausted(job: dict) -> None:
                     await give_up(job, recorder)
 
-                typer.echo(f"worker {name} consuming {queue.stream}")
-                await Worker(queue, handle, name, visibility_ms=s.job_visibility_s * 1000,
-                             on_exhausted=exhausted).run_forever(anyio.Event())
+                typer.echo(
+                    f"worker {name} consuming {queue.stream}" + (" (find_code on)" if index else "")
+                )
+                await Worker(
+                    queue,
+                    handle,
+                    name,
+                    visibility_ms=s.job_visibility_s * 1000,
+                    on_exhausted=exhausted,
+                ).run_forever(anyio.Event())
         finally:
             await recorder.close()
             await queue.close()

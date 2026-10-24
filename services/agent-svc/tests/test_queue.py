@@ -50,8 +50,9 @@ async def test_retries_exhausted_marks_failed(queue: JobQueue):
     async def on_exhausted(job):
         exhausted.append(job["run_id"])
 
-    worker = Worker(queue, handle, "w1", visibility_ms=0, max_deliveries=3,
-                    on_exhausted=on_exhausted)
+    worker = Worker(
+        queue, handle, "w1", visibility_ms=0, max_deliveries=3, on_exhausted=on_exhausted
+    )
     for _ in range(5):
         await worker.run_once(block_ms=50)
     assert exhausted == ["r3"]

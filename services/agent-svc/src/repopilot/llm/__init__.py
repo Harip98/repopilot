@@ -10,6 +10,14 @@ from repopilot.llm.types import (
 )
 
 __all__ = [
-    "AssistantMessage", "ChatModel", "ChatResult", "FakeChatModel", "OpenAICompatChat", "ToolCall",
-    "ToolSpec", "Usage", "cost_usd", "get_chat_model",
+    "AssistantMessage",
+    "ChatModel",
+    "ChatResult",
+    "FakeChatModel",
+    "OpenAICompatChat",
+    "ToolCall",
+    "ToolSpec",
+    "Usage",
+    "cost_usd",
+    "get_chat_model",
 ]

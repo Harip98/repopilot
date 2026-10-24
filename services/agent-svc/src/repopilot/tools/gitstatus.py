@@ -10,7 +10,7 @@ def name_status_entries(out: str) -> list[tuple[str, list[str]]]:
             i += 1
             continue
         width = 2 if status[0] in "RC" else 1
-        entries.append((status, [p for p in tokens[i + 1:i + 1 + width] if p]))
+        entries.append((status, [p for p in tokens[i + 1 : i + 1 + width] if p]))
         i += 1 + width
     return entries
 
@@ -31,6 +31,6 @@ def raw_entries(out: str) -> list[tuple[str, str, list[str]]]:
             continue
         _, new_mode, _, _, status = header[1:].split(" ")
         width = 2 if status[0] in "RC" else 1
-        entries.append((status, new_mode, [p for p in tokens[i + 1:i + 1 + width] if p]))
+        entries.append((status, new_mode, [p for p in tokens[i + 1 : i + 1 + width] if p]))
         i += 1 + width
     return entries

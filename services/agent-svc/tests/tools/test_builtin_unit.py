@@ -16,8 +16,15 @@ class FakeSandbox:
     def __init__(self, files: dict[str, bytes] | None = None):
         self.files = dict(files or {})
         self.execs: list[list[str]] = []
-        self.exec_result = ExecResult(exit_code=0, stdout="", stderr="", stdout_truncated=False,
-                                      stderr_truncated=False, timed_out=False, duration_ms=1)
+        self.exec_result = ExecResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+            duration_ms=1,
+        )
 
     async def read_file(self, sandbox_id: str, path: str) -> bytes:
         if path not in self.files:
@@ -37,8 +44,12 @@ class FakeSandbox:
 
 
 def _ctx(sb: FakeSandbox, protected: list[str] | None = None) -> ToolContext:
-    return ToolContext(sandbox=sb, sandbox_id="0123456789abcdef",
-                       policy=ToolPolicy(protected_paths=protected or []), test_command=["pytest", "-q"])
+    return ToolContext(
+        sandbox=sb,
+        sandbox_id="0123456789abcdef",
+        policy=ToolPolicy(protected_paths=protected or []),
+        test_command=["pytest", "-q"],
+    )
 
 
 async def _call(sb, name, protected=None, **args):
@@ -47,12 +58,27 @@ async def _call(sb, name, protected=None, **args):
 
 def test_registry_has_the_ten_tools():
     reg = build_registry()
-    assert sorted(reg.names) == sorted([
-        "read_file", "list_dir", "search_code", "replace_text", "create_file", "apply_patch",
-        "run_tests", "run_lint", "git_diff", "git_log",
-    ])
+    assert sorted(reg.names) == sorted(
+        [
+            "read_file",
+            "list_dir",
+            "search_code",
+            "replace_text",
+            "create_file",
+            "apply_patch",
+            "run_tests",
+            "run_lint",
+            "git_diff",
+            "git_log",
+        ]
+    )
     assert sorted(s.name for s in reg.subset({"read"}).specs()) == [
-        "git_diff", "git_log", "list_dir", "read_file", "search_code"]
+        "git_diff",
+        "git_log",
+        "list_dir",
+        "read_file",
+        "search_code",
+    ]
 
 
 async def test_read_file_numbers_and_caps():
@@ -128,8 +154,10 @@ async def test_list_dir_and_search_guard_option_injection():
 
 
 def _applies(sb) -> bool:
-    return any(argv[:2] == ["git", "apply"] and "--numstat" not in argv and "--check" not in argv
-               for argv in sb.execs)
+    return any(
+        argv[:2] == ["git", "apply"] and "--numstat" not in argv and "--check" not in argv
+        for argv in sb.execs
+    )
 
 
 async def test_apply_patch_policy_uses_git_paths():
@@ -145,8 +173,12 @@ async def test_apply_patch_policy_uses_git_paths():
 async def test_apply_patch_rename_into_protected_path():
     sb = FakeSandbox()
     sb.numstat = "0\t0\t\x00app/a.py\x00tests/test_heldout_x.py\x00"
-    out = await _call(sb, "apply_patch", protected=["tests/test_heldout_*"],
-                      patch="diff --git a/app/a.py b/tests/test_heldout_x.py\nrename from app/a.py\n")
+    out = await _call(
+        sb,
+        "apply_patch",
+        protected=["tests/test_heldout_*"],
+        patch="diff --git a/app/a.py b/tests/test_heldout_x.py\nrename from app/a.py\n",
+    )
     assert out.denied and "test_heldout_x.py" in out.error and not _applies(sb)
 
 
@@ -165,6 +197,11 @@ async def test_apply_patch_without_changes():
 
 
 async def test_replace_text_non_utf8():
-    out = await _call(FakeSandbox({"a.txt": "caf\xe9".encode("latin-1")}), "replace_text",
-                      path="a.txt", old="caf", new="tea")
+    out = await _call(
+        FakeSandbox({"a.txt": "caf\xe9".encode("latin-1")}),
+        "replace_text",
+        path="a.txt",
+        old="caf",
+        new="tea",
+    )
     assert not out.ok and "UTF-8" in out.error

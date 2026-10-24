@@ -45,8 +45,9 @@ def _otlp_headers(settings: Settings) -> dict[str, str]:
     return {}
 
 
-def setup_tracing(settings: Settings, service_name: str,
-                  exporter: SpanExporter | None = None) -> TracerProvider | None:
+def setup_tracing(
+    settings: Settings, service_name: str, exporter: SpanExporter | None = None
+) -> TracerProvider | None:
     """Install a tracer provider; returns None (tracing stays a no-op) when nothing is configured."""
     global _capture_content
     _capture_content = settings.otel_capture_content
@@ -72,8 +73,9 @@ def trace_id_hex(span: Span) -> str | None:
 
 @contextmanager
 def run_span(name: str, run_id: str, **attrs: Any) -> Iterator[Span]:
-    with tracer().start_as_current_span(name, attributes={"repopilot.run_id": run_id,
-                                                          **_clean(attrs)}) as span:
+    with tracer().start_as_current_span(
+        name, attributes={"repopilot.run_id": run_id, **_clean(attrs)}
+    ) as span:
         yield span
 
 
@@ -87,9 +89,15 @@ def traced_node(name: str, fn: Callable[..., Awaitable[dict]]) -> Callable[..., 
 
     @functools.wraps(fn)
     async def wrapper(state, runtime):
-        with tracer().start_as_current_span(f"repopilot.node.{name}", attributes={
-            "repopilot.run_id": state.run_id, "repopilot.phase": state.phase,
-        }, record_exception=False, set_status_on_exception=False) as span:
+        with tracer().start_as_current_span(
+            f"repopilot.node.{name}",
+            attributes={
+                "repopilot.run_id": state.run_id,
+                "repopilot.phase": state.phase,
+            },
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
             try:
                 update = await fn(state, runtime)
             except GraphInterrupt:
@@ -111,11 +119,17 @@ def traced_node(name: str, fn: Callable[..., Awaitable[dict]]) -> Callable[..., 
 
 @contextmanager
 def llm_span(model: str, run_id: str, messages: int) -> Iterator[Span]:
-    with tracer().start_as_current_span("gen_ai.chat", attributes={
-        "gen_ai.operation.name": "chat", "gen_ai.system": "openai",
-        "gen_ai.request.model": model, "gen_ai.request.temperature": 0.0,
-        "repopilot.run_id": run_id, "repopilot.messages": messages,
-    }) as span:
+    with tracer().start_as_current_span(
+        "gen_ai.chat",
+        attributes={
+            "gen_ai.operation.name": "chat",
+            "gen_ai.system": "openai",
+            "gen_ai.request.model": model,
+            "gen_ai.request.temperature": 0.0,
+            "repopilot.run_id": run_id,
+            "repopilot.messages": messages,
+        },
+    ) as span:
         try:
             yield span
         except Exception as exc:
@@ -124,28 +138,48 @@ def llm_span(model: str, run_id: str, messages: int) -> Iterator[Span]:
             raise
 
 
-def record_llm_result(span: Span, prompt_tokens: int, completion_tokens: int,
-                      finish_reason: str | None, tool_calls: list[str], content: str | None) -> None:
-    span.set_attributes(_clean({
-        "gen_ai.usage.input_tokens": prompt_tokens, "gen_ai.usage.output_tokens": completion_tokens,
-        "gen_ai.response.finish_reasons": [finish_reason] if finish_reason else None,
-        "repopilot.tool_calls": tool_calls,
-        "gen_ai.completion": (content or "")[:4000] if capture_content() else None,
-    }))
+def record_llm_result(
+    span: Span,
+    prompt_tokens: int,
+    completion_tokens: int,
+    finish_reason: str | None,
+    tool_calls: list[str],
+    content: str | None,
+) -> None:
+    span.set_attributes(
+        _clean(
+            {
+                "gen_ai.usage.input_tokens": prompt_tokens,
+                "gen_ai.usage.output_tokens": completion_tokens,
+                "gen_ai.response.finish_reasons": [finish_reason] if finish_reason else None,
+                "repopilot.tool_calls": tool_calls,
+                "gen_ai.completion": (content or "")[:4000] if capture_content() else None,
+            }
+        )
+    )
 
 
 @contextmanager
 def tool_span(name: str, run_id: str) -> Iterator[Span]:
-    with tracer().start_as_current_span(f"repopilot.tool.{name}", attributes={
-        "repopilot.run_id": run_id, "repopilot.tool": name}) as span:
+    with tracer().start_as_current_span(
+        f"repopilot.tool.{name}", attributes={"repopilot.run_id": run_id, "repopilot.tool": name}
+    ) as span:
         yield span
 
 
-def record_tool_result(span: Span, ok: bool, denied: bool, error: str | None, latency_ms: int,
-                       content: str) -> None:
-    span.set_attributes(_clean({
-        "repopilot.tool.ok": ok, "repopilot.tool.denied": denied, "repopilot.tool.latency_ms": latency_ms,
-        "repopilot.tool.error": error, "repopilot.tool.output": content[:2000] if capture_content() else None,
-    }))
+def record_tool_result(
+    span: Span, ok: bool, denied: bool, error: str | None, latency_ms: int, content: str
+) -> None:
+    span.set_attributes(
+        _clean(
+            {
+                "repopilot.tool.ok": ok,
+                "repopilot.tool.denied": denied,
+                "repopilot.tool.latency_ms": latency_ms,
+                "repopilot.tool.error": error,
+                "repopilot.tool.output": content[:2000] if capture_content() else None,
+            }
+        )
+    )
     if not ok:
         span.set_status(Status(StatusCode.ERROR, "denied" if denied else "failed"))

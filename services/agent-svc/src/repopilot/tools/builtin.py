@@ -40,6 +40,7 @@ def _exec_report(res: ExecResult, limit: int = 7000) -> str:
 
 # --- read tools ---------------------------------------------------------------------------
 
+
 class ReadFileArgs(BaseModel):
     path: str = Field(description="File path relative to the repository root.")
     start_line: int = Field(default=1, ge=1, description="First line to show (1-based).")
@@ -68,11 +69,28 @@ class ListDirArgs(BaseModel):
 
 
 async def list_dir(ctx: ToolContext, a: ListDirArgs) -> str:
-    res = await ctx.sandbox.exec(ctx.sandbox_id, [
-        "find", _arg_path(a.path), "-mindepth", "1", "-maxdepth", str(a.depth),
-        "-not", "-path", "*/.git", "-not", "-path", "*/.git/*",
-        "-not", "-path", "*/__pycache__*", "-printf", "%y %P\n",
-    ])
+    res = await ctx.sandbox.exec(
+        ctx.sandbox_id,
+        [
+            "find",
+            _arg_path(a.path),
+            "-mindepth",
+            "1",
+            "-maxdepth",
+            str(a.depth),
+            "-not",
+            "-path",
+            "*/.git",
+            "-not",
+            "-path",
+            "*/.git/*",
+            "-not",
+            "-path",
+            "*/__pycache__*",
+            "-printf",
+            "%y %P\n",
+        ],
+    )
     if res.exit_code != 0:
         raise ToolError(res.stderr.strip() or f"cannot list {a.path}")
     entries = []
@@ -89,8 +107,18 @@ class SearchCodeArgs(BaseModel):
 
 
 async def search_code(ctx: ToolContext, a: SearchCodeArgs) -> str:
-    argv = ["rg", "-n", "--no-heading", "--color", "never", "--hidden", "--glob", "!.git",
-            "--max-columns", "300"]
+    argv = [
+        "rg",
+        "-n",
+        "--no-heading",
+        "--color",
+        "never",
+        "--hidden",
+        "--glob",
+        "!.git",
+        "--max-columns",
+        "300",
+    ]
     if not a.regex:
         argv.append("-F")
     path = "." if a.path in ("", ".") else _rel(a.path)
@@ -150,6 +178,7 @@ async def find_code(ctx: ToolContext, a: FindCodeArgs) -> str:
 
 # --- write tools --------------------------------------------------------------------------
 
+
 class ReplaceTextArgs(BaseModel):
     path: str = Field(description="File to edit.")
     old: str = Field(min_length=1, description="Exact existing text; must occur exactly once.")
@@ -166,8 +195,10 @@ async def replace_text(ctx: ToolContext, a: ReplaceTextArgs) -> str:
     if count == 0:
         raise ToolError(f"old text not found in {path}; read the file again and copy it exactly")
     if count > 1:
-        raise ToolError(f"old text occurs {count} times in {path}; include more surrounding "
-                        "lines so it matches exactly once")
+        raise ToolError(
+            f"old text occurs {count} times in {path}; include more surrounding "
+            "lines so it matches exactly once"
+        )
     line = text[: text.index(a.old)].count("\n") + 1
     await ctx.sandbox.write_file(ctx.sandbox_id, path, text.replace(a.old, a.new, 1).encode())
     return f"replaced 1 occurrence in {path} at line {line}"
@@ -208,12 +239,14 @@ def parse_numstat_z(out: str) -> list[str]:
             paths.append(parts[2])
             i += 1
         else:
-            paths += [p for p in fields[i + 1:i + 3] if p]
+            paths += [p for p in fields[i + 1 : i + 3] if p]
             i += 3
     return paths
 
 
-_SYMLINK_MODE = re.compile(r"^(?:new file mode|new mode|old mode|deleted file mode) 120000\s*$", re.MULTILINE)
+_SYMLINK_MODE = re.compile(
+    r"^(?:new file mode|new mode|old mode|deleted file mode) 120000\s*$", re.MULTILINE
+)
 
 
 async def apply_patch(ctx: ToolContext, a: ApplyPatchArgs) -> str:
@@ -222,7 +255,8 @@ async def apply_patch(ctx: ToolContext, a: ApplyPatchArgs) -> str:
     # Ask git which paths it would touch: its parser (quoting, -p1 prefixes, header-only and
     # binary patches, renames) is the one that writes files, so it is the one policy checks.
     stat = await ctx.sandbox.exec(
-        ctx.sandbox_id, ["git", "apply", "--numstat", "-z", "--recount", PATCH_FILE])
+        ctx.sandbox_id, ["git", "apply", "--numstat", "-z", "--recount", PATCH_FILE]
+    )
     if stat.exit_code != 0:
         raise ToolError("patch does not apply: " + (stat.stderr.strip() or stat.stdout.strip()))
     targets = sorted(set(parse_numstat_z(stat.stdout)))
@@ -235,17 +269,20 @@ async def apply_patch(ctx: ToolContext, a: ApplyPatchArgs) -> str:
         raise PolicyDenied("patches may not create or change symlinks")
     # --recount: models often get hunk line counts wrong; the content is what must match.
     check = await ctx.sandbox.exec(
-        ctx.sandbox_id, ["git", "apply", "--check", "--recount", "--whitespace=nowarn", PATCH_FILE])
+        ctx.sandbox_id, ["git", "apply", "--check", "--recount", "--whitespace=nowarn", PATCH_FILE]
+    )
     if check.exit_code != 0:
         raise ToolError("patch does not apply: " + (check.stderr.strip() or check.stdout.strip()))
     res = await ctx.sandbox.exec(
-        ctx.sandbox_id, ["git", "apply", "--recount", "--whitespace=nowarn", PATCH_FILE])
+        ctx.sandbox_id, ["git", "apply", "--recount", "--whitespace=nowarn", PATCH_FILE]
+    )
     if res.exit_code != 0:
         raise ToolError("patch failed: " + res.stderr.strip())
     return "applied patch to: " + ", ".join(targets)
 
 
 # --- exec tools ---------------------------------------------------------------------------
+
 
 class RunTestsArgs(BaseModel):
     target: str | None = Field(
@@ -257,7 +294,9 @@ class RunTestsArgs(BaseModel):
 def _check_target(target: str) -> str:
     file_part = target.split("::", 1)[0]
     if target.startswith("-") or not _NODE_ID.match(target) or clean_rel_path(file_part) is None:
-        raise ToolError(f"invalid test target {target!r}; use a path like tests/test_x.py::test_name")
+        raise ToolError(
+            f"invalid test target {target!r}; use a path like tests/test_x.py::test_name"
+        )
     return target
 
 
@@ -267,7 +306,9 @@ async def run_tests(ctx: ToolContext, a: RunTestsArgs) -> str:
 
 
 async def run_lint(ctx: ToolContext, a: NoArgs) -> str:
-    res = await ctx.sandbox.exec(ctx.sandbox_id, ["ruff", "check", "--output-format", "concise", "."])
+    res = await ctx.sandbox.exec(
+        ctx.sandbox_id, ["ruff", "check", "--output-format", "concise", "."]
+    )
     return _exec_report(res)
 
 
@@ -276,27 +317,87 @@ def _write_check(policy: ToolPolicy, args: ReplaceTextArgs | CreateFileArgs) -> 
 
 
 def build_registry(*, find_code_tool: bool = False) -> ToolRegistry:
-    extra = [Tool("find_code", "Search the code by meaning (hybrid full-text + embedding index); "
-                  "returns the best-matching code windows.", FindCodeArgs, find_code, "read")]
-    return ToolRegistry([*(extra if find_code_tool else []),
-        Tool("read_file", "Read a text file with line numbers (at most 400 lines per call).",
-             ReadFileArgs, read_file, "read"),
-        Tool("list_dir", "List files and directories (directories end with /).",
-             ListDirArgs, list_dir, "read"),
-        Tool("search_code", "Search the repository for text (or a regex); returns file:line:match.",
-             SearchCodeArgs, search_code, "read"),
-        Tool("git_log", "Recent commits with the files they changed, optionally for one path.",
-             GitLogArgs, git_log, "read"),
-        Tool("git_diff", "Show all uncommitted changes, including new files.",
-             NoArgs, git_diff, "read"),
-        Tool("replace_text", "Replace one exact, unique occurrence of text in a file. Writes "
-             "never follow symlinks.", ReplaceTextArgs, replace_text, "write", check=_write_check),
-        Tool("create_file", "Create a new file. Fails if it already exists.",
-             CreateFileArgs, create_file, "write", check=_write_check),
-        Tool("apply_patch", "Apply a unified diff to the repository. Include 3 lines of "
-             "unchanged context before and after each change, as `git diff` does.",
-             ApplyPatchArgs, apply_patch, "write", check=lambda p, a: p.check_patch(a.patch)),
-        Tool("run_tests", "Run the test suite, or one test file / test id.",
-             RunTestsArgs, run_tests, "exec"),
-        Tool("run_lint", "Run ruff on the repository.", NoArgs, run_lint, "exec"),
-    ])
+    extra = [
+        Tool(
+            "find_code",
+            "Search the code by meaning (hybrid full-text + embedding index); "
+            "returns the best-matching code windows.",
+            FindCodeArgs,
+            find_code,
+            "read",
+        )
+    ]
+    return ToolRegistry(
+        [
+            *(extra if find_code_tool else []),
+            Tool(
+                "read_file",
+                "Read a text file with line numbers (at most 400 lines per call).",
+                ReadFileArgs,
+                read_file,
+                "read",
+            ),
+            Tool(
+                "list_dir",
+                "List files and directories (directories end with /).",
+                ListDirArgs,
+                list_dir,
+                "read",
+            ),
+            Tool(
+                "search_code",
+                "Search the repository for text (or a regex); returns file:line:match.",
+                SearchCodeArgs,
+                search_code,
+                "read",
+            ),
+            Tool(
+                "git_log",
+                "Recent commits with the files they changed, optionally for one path.",
+                GitLogArgs,
+                git_log,
+                "read",
+            ),
+            Tool(
+                "git_diff",
+                "Show all uncommitted changes, including new files.",
+                NoArgs,
+                git_diff,
+                "read",
+            ),
+            Tool(
+                "replace_text",
+                "Replace one exact, unique occurrence of text in a file. Writes "
+                "never follow symlinks.",
+                ReplaceTextArgs,
+                replace_text,
+                "write",
+                check=_write_check,
+            ),
+            Tool(
+                "create_file",
+                "Create a new file. Fails if it already exists.",
+                CreateFileArgs,
+                create_file,
+                "write",
+                check=_write_check,
+            ),
+            Tool(
+                "apply_patch",
+                "Apply a unified diff to the repository. Include 3 lines of "
+                "unchanged context before and after each change, as `git diff` does.",
+                ApplyPatchArgs,
+                apply_patch,
+                "write",
+                check=lambda p, a: p.check_patch(a.patch),
+            ),
+            Tool(
+                "run_tests",
+                "Run the test suite, or one test file / test id.",
+                RunTestsArgs,
+                run_tests,
+                "exec",
+            ),
+            Tool("run_lint", "Run ruff on the repository.", NoArgs, run_lint, "exec"),
+        ]
+    )

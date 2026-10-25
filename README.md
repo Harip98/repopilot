@@ -6,7 +6,7 @@ code inside a locked-down sandbox, proves the fix with tests, and opens a draft 
 
 [![CI](https://github.com/Harip98/repopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Harip98/repopilot/actions/workflows/ci.yml)
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
+![Go 1.27](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
 ![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
@@ -180,7 +180,7 @@ semantics and GitHub flow are in [docs/architecture.md](docs/architecture.md).
 | Area | Technology |
 |---|---|
 | Agent | Python 3.12, LangGraph with a Postgres checkpointer, Pydantic, structured tool calling over any OpenAI-compatible API |
-| Sandbox | Go 1.25 (standard library only), Docker Engine API, hardened containers |
+| Sandbox | Go 1.27 (standard library only), Docker Engine API, hardened containers |
 | Service | FastAPI, Server-Sent Events, Redis Streams (consumer groups, reclaim), psycopg 3 |
 | Data | PostgreSQL 16 with pgvector: runs, events, evals, checkpoints, and optional hybrid code search (vector + full-text, RRF) |
 | Interfaces | Next.js 15 review console, a CLI, and an MCP server that exposes the sandboxed tools |

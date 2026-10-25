@@ -30,7 +30,7 @@ are built the way they are.
 | Component | Language | Job |
 |---|---|---|
 | `services/agent-svc` | Python 3.12 | Agent graph, tools, evaluation, API, worker, CLI, MCP server |
-| `services/sandbox-svc` | Go 1.25, stdlib only | The only process with the Docker socket; creates and drives sandboxes |
+| `services/sandbox-svc` | Go 1.27, stdlib only | The only process with the Docker socket; creates and drives sandboxes |
 | `web` | Next.js 15, TypeScript | Review console |
 | Postgres 16 + pgvector | | Runs and their timelines, eval results, LangGraph checkpoints, optional code index |
 | Redis 7 | | Durable job queue (Streams with a consumer group) |

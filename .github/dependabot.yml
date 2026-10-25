@@ -1,26 +1,58 @@
 # Weekly update PRs. bench/images is left out on purpose: the frozen test split's hashes
 # (bench/test_split.sha256) cover those Dockerfiles, so changing them invalidates the freeze.
+# Minor and patch updates arrive as one PR per ecosystem. Major versions are upgraded by hand,
+# since they need code changes (Next 16, TypeScript 7) or must match the runtime (@types/node).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: uv
     directory: /services/agent-svc
     schedule:
       interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: gomod
     directory: /services/sandbox-svc
     schedule:
       interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directories:
       - /services/agent-svc
       - /services/sandbox-svc
     schedule:
       interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # pyproject.toml pins requires-python to >=3.12,<3.13, so only 3.12 patch releases apply.
+      - dependency-name: python
+        update-types: ["version-update:semver-minor"]

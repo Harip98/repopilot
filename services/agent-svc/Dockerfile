@@ -2,7 +2,7 @@
 # Build from the repository root so migrations and benchmark tasks are included:
 #   docker build -f services/agent-svc/Dockerfile -t repopilot-agent-svc .
 # The base is pinned by digest (Dependabot proposes updates); uv is pinned exactly.
-FROM python:3.12.16-slim-trixie@sha256:8523d6abeb48ceae0b7240d30c5808fc26cb79c1a635bacdf19cf3baecfbec07
+FROM python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
